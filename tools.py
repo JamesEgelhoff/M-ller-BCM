@@ -673,12 +673,12 @@ def plot_res_vs_binwidth(ChA, ChB, minWidth, maxWidth, steps, ncalc = 30, fs=3e9
     '''
     
     #instantiate binwidth values and create an array to store resolution data
-    widthList = np.linspace(minWidth, maxWidth, num=steps)
+    widthList = np.logspace(np.log10(minWidth), np.log10(maxWidth), num=steps)
     resList = np.zeros_like(widthList)
     
     #loop to calculate resolutions at various bin widths
     for i in range(0,len(widthList)) :
-        print('Calculating resolution for {0:e} second pulse windows'.format(widthList[i]))
+        print('Calculating resolution for {0:f} millisecond pulse windows'.format(1e3*widthList[i]))
         res, mu, diffs = amplitude_asym_hist(ChA, ChB, fs=fs, bits=bits, ncalc=ncalc, pulse_width=widthList[i], hist=False, scatter=False)
         resList[i] = res
     

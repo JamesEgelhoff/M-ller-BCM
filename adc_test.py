@@ -3,8 +3,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 
-fileraw = "C:/Users/molle/Desktop/ADC32RF45/data/8_3_2018_1400MA_3000MS_12bit_200ms.bin"
-filevoltage = "C:/Users/molle/Desktop/ADC32RF45/data/8_3_2018_1400MA_3000MS_12bit_200ms.npy"
+fileraw = "C:/Users/James/Desktop/Moller/ADC data/10_17_2018_1497MA_15dB_3000MS_12bit_200ms_setup6.bin"
+filevoltage = "C:/Users/James/Desktop/Moller/ADC data/10_17_2018_1497MA_15dB_3000MS_12bit_200ms_setup6.npy"
 # fileavg = '../ADC_DATA/8_3/1400_3000_100_avg_amplitude.npy'
 fo = 1.497e9
 foff = -38720 # 10 Hz accuracy (calculated with 100ms fft)
@@ -16,15 +16,17 @@ ncalc = 400
 filter_ntaps = 100
 npt2n = 2**29 #= 536870912, this value is around 180ms around 3GHz sampling.
 
-t.read_binary(infile=fileraw, outfile=filevoltage, bits=12, fsr=1.35, raw=False)
-A, B = t.open_binary(filevoltage)
+#t.read_binary(infile=fileraw, outfile=filevoltage, bits=12, fsr=1.35, raw=False)
+# A, B = t.open_binary(filevoltage)
 # t.xcor_spectrum(A, B, fo, fs, int_time=int_time, n_window = ncalc, dual=True)
-#resList, widthList = t.plot_res_vs_binwidth(A, B, 1e-6, 1.001e-3, 1001, log=True)
+resList, widthList = t.plot_res_vs_binwidth(A, B, 1e-6, 1.001e-3, 5001, log=True)
 # sigma, mu, diffs = t.amplitude_asym_hist(A, B, fs=fs, bits=bits, ncalc = ncalc, pulse_width=int_time, hist=False, scatter=True)
 
-plt.plot(A[0:500])
-plt.plot(B[0:500])
-plt.show()
+# =============================================================================
+# plt.plot(A[0:500])
+# plt.plot(B[0:500])
+# plt.show()
+# =============================================================================
 
 # freqAmp = np.array([MA1497_m3dB*1e6, MA1497_0dB*1e6, MA1497_3dB*1e6, MA1497_6dB*1e6, MA1497_9dB*1e6])
 
