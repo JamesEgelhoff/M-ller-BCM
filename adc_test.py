@@ -5,10 +5,7 @@ from mpl_toolkits.mplot3d import Axes3D
 
 fileraw = "C:/Users/molle/Desktop/ADC32RF45/data/10_17_2018_1497MA_15dB_3000MS_12bit_200ms_setup6.bin"
 filevoltage = "C:/Users/molle/Desktop/ADC32RF45/data/10_17_2018_1497MA_15dB_3000MS_12bit_200ms_setup6.npy"
-=======
-fileraw = "C:/Users/James/Desktop/Moller/ADC data/10_17_2018_1497MA_15dB_3000MS_12bit_200ms_setup6.bin"
-filevoltage = "C:/Users/James/Desktop/Moller/ADC data/10_17_2018_1497MA_15dB_3000MS_12bit_200ms_setup6.npy"
->>>>>>> 441095fc4a5e31eccae6e6c090d28bd451fa37a7
+
 # fileavg = '../ADC_DATA/8_3/1400_3000_100_avg_amplitude.npy'
 fo = 1.497e9
 foff = -38720 # 10 Hz accuracy (calculated with 100ms fft)
@@ -38,19 +35,23 @@ adcZ = 65 #ohms
 #     print(i)
 # =============================================================================
 
-powerResList = t.power_scatter(fileList, adcZ, title=title)
+# powerResList = t.power_scatter(fileList, adcZ, title=title)
 
-#t.read_binary(infile=fileraw, outfile=filevoltage, bits=12, fsr=1.35, raw=False)
-#A, B = t.open_binary(filevoltage)
-#t.xcor_spectrum(A, B, fo, fs, int_time=int_time, n_window = ncalc, dual=True, dualTitle = title)
-#resList, widthList = t.plot_res_vs_binwidth(A, B, 1e-6, 1.001e-3, 1001, title, log=True)
-#sigma, mu, diffs = t.amplitude_asym_hist(A, B, fs=fs, bits=bits, ncalc = "auto", pulse_width=int_time, hist=True, scatter=False, title=title)
-
-# =============================================================================
 # plt.plot(A[0:500], label="Channel A")
 # plt.plot(B[0:500], label="Channel B")
 # plt.legend(loc=2)
 # plt.title(title)
+
+t.read_binary(infile=fileraw, outfile=filevoltage, bits=12, fsr=1.35, raw=False)
+A, B = t.open_binary(filevoltage)
+# t.xcor_spectrum(A, B, fo, fs, int_time=int_time, n_window = ncalc, dual=True)
+resList, widthList = t.plot_res_vs_binwidth(A, B, 1e-6, 1.001e-3, 5001, log=True)
+# sigma, mu, diffs = t.amplitude_asym_hist(A, B, fs=fs, bits=bits, ncalc = ncalc, pulse_width=int_time, hist=False, scatter=True)
+
+# =============================================================================
+# plt.plot(A[0:500])
+# plt.plot(B[0:500])
+
 # plt.show()
 # =============================================================================
 
@@ -92,8 +93,8 @@ powerResList = t.power_scatter(fileList, adcZ, title=title)
 
 # foff = t.get_freq(data=A, fs=fs, fo_nominal=fo, int_time = 10e-3, plot=False)
 
-#a, avg, avg2 = t.ddc(ChA=A, ChB=B, fo=fo+foff, lpf_fc=1e3, lpf_ntaps=filter_ntaps, fs = fs, bits = bits, int_time=int_time,
-#                     ncalc=ncalc, calc_off=filter_ntaps+10, phase_time=int_time, nch=2, plot_en=False, plot_len=3e6, plot_win=0)
+a, avg, avg2 = t.ddc(ChA=A, ChB=B, fo=fo+foff, lpf_fc=1e3, lpf_ntaps=filter_ntaps, fs = fs, bits = bits, int_time=int_time,
+                     ncalc=ncalc, calc_off=filter_ntaps+10, phase_time=int_time, nch=2, plot_en=False, plot_len=3e6, plot_win=0)
 
 #print('amplitude distribution =', np.std(avg[0]/avg[1]), 'sigma (phase reconstruction)\n')
 #print('amplitude distribution =', np.std(avg2[0]/avg2[1]), 'sigma (hypotenuse reconstruction)')

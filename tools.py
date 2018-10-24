@@ -445,13 +445,6 @@ plot_en, plot_len, plot_win) :
             f = int(i*l + phase_npt) 
             
             avg_phis = np.arctan(I_f[d:f]/Q_f[d:f])
-            
-            #returns phis in full range [0,2pi]
-# =============================================================================
-#             for j in range(0,len(avg_phis)) :
-#                 if Q_f[d:f][j] < 0:
-#                     avg_phis[j] = avg_phis[j]+np.pi
-# =============================================================================
             avg_phi = np.mean(avg_phis)
             
             # phase based reconstruction
@@ -680,12 +673,12 @@ def plot_res_vs_binwidth(ChA, ChB, minWidth, maxWidth, steps, title, ncalc = 30,
     '''
     
     #instantiate binwidth values and create an array to store resolution data
-    widthList = np.linspace(minWidth, maxWidth, num=steps)
+    widthList = np.logspace(np.log10(minWidth), np.log10(maxWidth), num=steps)
     resList = np.zeros_like(widthList)
     
     #loop to calculate resolutions at various bin widths
     for i in range(0,len(widthList)) :
-        print('Calculating resolution for {0:e} second pulse windows'.format(widthList[i]))
+        print('Calculating resolution for {0:f} millisecond pulse windows'.format(1e3*widthList[i]))
         res, mu, diffs = amplitude_asym_hist(ChA, ChB, fs=fs, bits=bits, ncalc=ncalc, pulse_width=widthList[i], hist=False, scatter=False)
         resList[i] = res
     
