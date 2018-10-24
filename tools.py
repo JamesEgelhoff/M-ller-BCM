@@ -174,7 +174,7 @@ def get_freq(data, fs, fo_nominal, int_time, ssb_bw_guess=None, npt2n=False, plo
     
     return tone_f
 
-def xcor_spectrum(ChA, ChB, fo, fs, nbits=12, int_time=1e-3, n_window=99, plot=False, dual=False) :
+def xcor_spectrum(ChA, ChB, fo, fs, nbits=12, int_time=1e-3, n_window=99, plot=False, dual=False, dualTitle="") :
     '''calculate the fourier spectrum of the adc's digitized signal.
     convert spectrum to units of dBc/Hz (decibels normalized to the carrier power in 1Hz bandwidth).
     calculate the jitter contribution in some specified bandwidth relative to the carrier.
@@ -287,6 +287,7 @@ def xcor_spectrum(ChA, ChB, fo, fs, nbits=12, int_time=1e-3, n_window=99, plot=F
         plt.xlabel('Frequency (Hertz)')
         plt.ylabel(r'$\frac{dBc}{Hz}$', rotation=0, fontsize=16)
         plt.legend(loc=2)
+        plt.title(dualTitle)
         plt.show()
 
     tone_a = np.argmax(Saa)*binwidth
@@ -578,7 +579,7 @@ def calibrate(A, B, fsr=1.35, bits=12, ax1=None, ax2=None) :
     input('press enter to finish calibration')
     return val, bins, slope, offset
     
-def amplitude_asym_hist(ChA, ChB, fs=3e9, bits=12, ncalc=200, pulse_width=5e-4, hist=True, scatter=False):
+def amplitude_asym_hist(ChA, ChB, fs=3e9, bits=12, ncalc="auto", pulse_width=5e-4, hist=True, scatter=False, title=""):
     
     
     ''' 
@@ -606,6 +607,10 @@ def amplitude_asym_hist(ChA, ChB, fs=3e9, bits=12, ncalc=200, pulse_width=5e-4, 
     #lists to store Channel A & B amplitude pairs
     Apairs = []
     Bpairs = []
+    
+    if ncalc == "auto":
+        ncalc = int(np.floor(len(ChA)/valsPerBin))
+        print("ncalc={:}".format(ncalc))
 
     #populate Apairs & Bpairs with bin averaged RMS amplitudes
     for i in range(0, ncalc, 2) :
@@ -646,6 +651,7 @@ def amplitude_asym_hist(ChA, ChB, fs=3e9, bits=12, ncalc=200, pulse_width=5e-4, 
         y,x,_ = plt.hist(diffs*1e6, range = (-int(3*sigma*1e6), int(3*sigma*1e6)), bins=20)
         plt.xlabel('Amplitude Asymmetry Difference (PPM)')
         plt.text(-int(2.5*sigma*1e6), y.max(), s='Sigma={0:.3f} PPM'.format(sigma*1e6))
+        plt.title(title)
         plt.show()
     
     #scatter plot
@@ -653,11 +659,12 @@ def amplitude_asym_hist(ChA, ChB, fs=3e9, bits=12, ncalc=200, pulse_width=5e-4, 
         plt.scatter(Adiffs*1e6, Bdiffs*1e6)
         plt.xlabel('Channel A asymmetry (PPM)')
         plt.ylabel('Channel B asymmetry (PPM)')
+        plt.title(title)
         plt.show()
 
     return sigma, mu, diffs
 
-def plot_res_vs_binwidth(ChA, ChB, minWidth, maxWidth, steps, ncalc = 30, fs=3e9, bits=12, log=False) :
+def plot_res_vs_binwidth(ChA, ChB, minWidth, maxWidth, steps, title, ncalc = 30, fs=3e9, bits=12, log=False) :
     
     ''' 
     calculates resolution as a function of bin width and plots it
@@ -686,6 +693,7 @@ def plot_res_vs_binwidth(ChA, ChB, minWidth, maxWidth, steps, ncalc = 30, fs=3e9
         plt.plot(widthList*1e3, resList*1e6, '.')
         plt.xlabel('Pulse width (ms)')
         plt.ylabel('Resolution (PPM)')
+        plt.title(title)
         plt.show()
     else:
         plt.plot(widthList*1e3, resList*1e6, '.')
@@ -693,6 +701,60 @@ def plot_res_vs_binwidth(ChA, ChB, minWidth, maxWidth, steps, ncalc = 30, fs=3e9
         plt.yscale('log')
         plt.xlabel('Pulse width (ms)')
         plt.ylabel('Resolution (PPM)')
+        plt.title(title)
         plt.show()
     
     return resList, widthList
+
+def power_scatter(fileList, adcZ, fs=3e9, bits=12, pulse_width=5e-4, title=""):
+    '''
+    Takes a list of filevoltage.npy files and the ADC impedance. Returns the calculated power,
+    the calculated amplitude asymmetry difference, and creates a scatter plot.
+    
+    inputs:
+    fileList: list of filevoltage.npy filenames to calculate v_rms from
+    adcZ: impedance (in Ohms) of ADC input
+    fs: sampling frequency
+    bits: bit precision
+    pulse_width: time per bin
+    '''
+    
+    #will store calculated power & resolution information for each .npy file
+    powerResList = []
+    
+    #iterates through list and calculates the signal power & resolution
+    for i in range(0,len(fileList)):
+        
+        #unpack the file
+        A, B = open_binary(fileList[i])
+        
+        #RMS squared voltage of each channel
+        v_rms2A = np.dot(A,A) / len(A)
+        v_rms2B = np.dot(B,B) / len(B)
+        
+        #power for each channel
+        powerA = v_rms2A/adcZ
+        powerB = v_rms2B/adcZ
+        
+        powerAve = (powerA+powerB)/2
+        
+        #convert to dBm
+        powerdB = 10 * np.log10(powerAve/1e-3)
+        
+        #calculate amplitude asymmetry diff
+        sigma, mu, diffs = amplitude_asym_hist(A, B, fs=fs, bits=bits, ncalc="auto", pulse_width=pulse_width, hist=False)
+        
+        #store the newly calculated info in powerResList
+        powerResList.append([powerdB, sigma*1e6])
+    
+    #plot up the data
+    plt.scatter(np.array(powerResList)[:,0], np.array(powerResList)[:,1])
+    plt.title(title)
+    plt.xlabel('Signal Power (dBm)')
+    plt.ylabel('Amplitude Asymmetry Resolution (PPM)')
+    plt.ylim(bottom=0)
+    #plt.yscale('log')
+    plt.show()
+    
+    return powerResList
+    
