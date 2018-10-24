@@ -5,6 +5,10 @@ from mpl_toolkits.mplot3d import Axes3D
 
 fileraw = "C:/Users/molle/Desktop/ADC32RF45/data/10_17_2018_1497MA_15dB_3000MS_12bit_200ms_setup6.bin"
 filevoltage = "C:/Users/molle/Desktop/ADC32RF45/data/10_17_2018_1497MA_15dB_3000MS_12bit_200ms_setup6.npy"
+=======
+fileraw = "C:/Users/James/Desktop/Moller/ADC data/10_17_2018_1497MA_15dB_3000MS_12bit_200ms_setup6.bin"
+filevoltage = "C:/Users/James/Desktop/Moller/ADC data/10_17_2018_1497MA_15dB_3000MS_12bit_200ms_setup6.npy"
+>>>>>>> 441095fc4a5e31eccae6e6c090d28bd451fa37a7
 # fileavg = '../ADC_DATA/8_3/1400_3000_100_avg_amplitude.npy'
 fo = 1.497e9
 foff = -38720 # 10 Hz accuracy (calculated with 100ms fft)
