@@ -2,7 +2,7 @@
 import numpy as np
 from scipy.fftpack import fft, rfft
 from scipy.integrate import trapz
-from scipy.signal import medfilt, butter, bessel, firwin, lfilter, freqz, decimate, periodogram, welch
+from scipy.signal import medfilt, butter, bessel, firwin, lfilter, freqz, decimate, periodogram, welch, iirdesign
 from scipy.stats import norm
 
 # plotting
@@ -172,7 +172,7 @@ def get_freq(data, fs, fo_nominal, int_time, ssb_bw_guess=None, npt2n=False, plo
 
     input('press enter to finish frequency script.')
     
-    return tone_f
+    return tone_f, f_off
 
 def xcor_spectrum(ChA, ChB, fo, fs, nbits=12, int_time=1e-3, n_window=99, plot=False, dual=False, dualTitle="") :
     '''calculate the fourier spectrum of the adc's digitized signal.
@@ -298,6 +298,7 @@ def xcor_spectrum(ChA, ChB, fo, fs, nbits=12, int_time=1e-3, n_window=99, plot=F
 
     # tj_A = calculate_jitter(ssb_pn=pn_lin_A[index], fbins=bins_A[index], carrier=fo, units='lin')
     # tj_B = calculate_jitter(ssb_pn=pn_lin_B[index], fbins=bins_B[index], carrier=fo, units='lin')
+    return tone_a, tone_b
     input('press enter to finish')
 
 def res_plot(A_avg, B_avg, ax_h=None, ax_s=None) :
@@ -309,8 +310,6 @@ def res_plot(A_avg, B_avg, ax_h=None, ax_s=None) :
 
     A = A_avg/B_avg
     n=len(A)
-
-
 
     if ax_h == ax_obj:
         bins, vals, pat = ax_h.hist(x=A, bins=None, range=None)
@@ -344,8 +343,8 @@ def res_plot(A_avg, B_avg, ax_h=None, ax_s=None) :
     print('resolution = ', rms, 'sigma')
 
 
-def ddc(ChA, ChB, fo, lpf_fc, lpf_ntaps, fs, bits, int_time, ncalc, calc_off, phase_time, nch, 
-plot_en, plot_len, plot_win) :
+def ddc(ChA, ChB, fo, foff, mixoff, lpf_fc, lpf_ntaps, fs, bits, int_time, ncalc, calc_off, phase_time, nch, 
+        plot_en, plot_len, plot_win, plot_Fourier=False, filt='FIR', suppress=True) :
     
     
     ''' 
@@ -371,28 +370,42 @@ plot_en, plot_len, plot_win) :
     a-
     avg
     avg2
-    rms
-    '''    
-        
-    Wo = 2*np.pi*fo    
+    '''        
+    
+    fo=fo+foff
+    
+    Wo = 2*np.pi*(fo-np.abs(mixoff))    
     Ts= 1/fs
 
 
     binwidth = int(1/int_time)
-
+    
+    if filt=="FIR":     
+        # this lowpass filter is for the digital downconversion
+        cutoff = lpf_fc
+        b0, a0 = define_fir_lpf(numtap=lpf_ntaps, cutoff=lpf_fc, fs=fs)
+        # b2, a2 = define_fir_hpf(numtap=15, cutoff=hpf_fc, fs)
+        w, h = freqz(b0, a0, worN=3000000)
         
-    # this lowpass filter is for the digital downconversion
-    cutoff = lpf_fc
-    b0, a0 = define_fir_lpf(numtap=lpf_ntaps, cutoff=lpf_fc, fs=fs)
-    # b2, a2 = define_fir_hpf(numtap=15, cutoff=hpf_fc, fs)
-    w, h = freqz(b0, a0, worN=3000000)
+    if filt=="IIR":
+        cutoff=lpf_fc*2
+        nyq = 0.5 * fs
+        normalized_pass = cutoff / nyq
+        normalized_stop = 100*cutoff / nyq
+        b0, a0 = iirdesign(normalized_pass, normalized_stop, .1, 30)
+        w, h = freqz(b0, a0, worN=3000000)
+    
     # figf, axf = plt.subplots(1,1)
     plt.plot(0.5*fs*w/np.pi, np.abs(h), 'b')
-    plt.plot(cutoff, 0.5*np.sqrt(2), 'ko')
+    plt.plot(np.abs(mixoff), 0.5*np.sqrt(2), 'ko')
     plt.axvline(cutoff, color='k')
-    plt.xlim(0, 0.5*fs)
+    if filt=="IIR":
+        plt.axvline(normalized_stop*nyq, color='k')
+    #plt.xlim(0, 0.5*fs)
     plt.title("Lowpass Filter Frequency Response")
     plt.xlabel('Frequency [Hz]')
+    plt.xscale('log')
+    plt.yscale('log')
     plt.grid()
     plt.show()
 
@@ -400,16 +413,18 @@ plot_en, plot_len, plot_win) :
     avg = np.zeros((nch,ncalc))
     avg2 = np.zeros((nch,ncalc))
     
-    # number of samples in 1ms window
+    # number of samples in integration window
     l = int(int_time*fs)
     npt = ncalc*l # averaging time for the phase. set to integer multiple of the integration window.
     
     Ch = np.array([ChA[:npt], ChB[:npt]])
     
     
-    # rad = Wo/fs*np.arange(l)
-    # I_shift= np.sin(rad) 
-    # Q_shift = np.cos(rad)
+# =============================================================================
+#     rad = Wo/fs*np.arange(l)
+#     I_shift= np.sin(rad) 
+#     Q_shift = np.cos(rad)
+# =============================================================================
 
     #try making rad length of full signal
     rad = Wo/fs*np.arange(len(Ch[0]))
@@ -427,8 +442,10 @@ plot_en, plot_len, plot_win) :
             z = (i+1)*l
             
             # multiply each window (of length l) by the sin and cos modulating terms.
-            # I[y:z] = Ch[k][y:z]*I_shift
-            # Q[y:z] = Ch[k][y:z]*Q_shift
+# =============================================================================
+#             I[y:z] = Ch[k][y:z]*I_shift
+#             Q[y:z] = Ch[k][y:z]*Q_shift
+# =============================================================================
             I[y:z] = Ch[k][y:z]*I_shift[y:z]
             Q[y:z] = Ch[k][y:z]*Q_shift[y:z]
 
@@ -445,13 +462,13 @@ plot_en, plot_len, plot_win) :
             f = int(i*l + phase_npt) 
             
             avg_phis = np.arctan(I_f[d:f]/Q_f[d:f])
-            avg_phi = np.mean(avg_phis)
+            #avg_phi = np.mean(avg_phis)
             
             # phase based reconstruction
-            a = 2*(Q_f[d:e]*np.cos(avg_phi) + I_f[d:e]*np.sin(avg_phi))
+            a = np.abs(2*(Q_f[d:e]*np.cos(avg_phis) + I_f[d:e]*np.sin(avg_phis)))
         
             # pythagorean reconstruction
-            a2 = np.hypot(I_f[d:e], Q_f[d:e])
+            a2 = 2*np.hypot(I_f[d:e], Q_f[d:e])
 
             # average amplitude recovered from I,Q components
             avg[k][i] = np.mean(a)
@@ -459,64 +476,161 @@ plot_en, plot_len, plot_win) :
 
     
     if plot_en :
-
+        
+        if filt=="FIR":
+            begin = lpf_ntaps
+        if filt=="IIR":
+            begin=0
         off = plot_win*l
         plot_len = int(plot_len)
-        xaxis = np.arange(plot_len)
-        # plt.rcParams['agg.path.chunksize'] = 10000
-
-        print('sample spacing = {Ts*1e9} nanoseconds')
-        begin = off
+        xaxis = np.arange(begin, plot_len)
+        plt.rcParams['agg.path.chunksize'] = 10000
+        if suppress==False:
+            print('sample spacing = {0:.5f}... nanoseconds'.format(Ts*1e9))
         end = off + plot_len
-        # figA, axA = plt.subplots(1,1)
-        plt.xlabel('samples')
-        plt.ylabel('volts')
-        plt.title('adc channel A raw data')
-        plt.plot(ChA[begin:end], x = xaxis, axis=axA)
-        plt.show()
+        figA, axA = plt.subplots(1,1)
+        axA.set_xlabel('samples')
+        axA.set_ylabel('volts')
+        axA.set_title('adc channel A raw data')
+        axA.plot(xaxis, ChA[begin:end])
+        figA.show()
 
-        # figB, axB = plt.subplots(1,1)
-        plt.xlabel('samples')
-        plt.ylabel('volts')
-        plt.title('adc channel B raw data')
-        plt.plot(ChB[begin:end], x = xaxis, axis=axB)
-        plt.show()
+        figB, axB = plt.subplots(1,1)
+        axB.set_xlabel('samples')
+        axB.set_ylabel('volts')
+        axB.set_title('adc channel B raw data')
+        axB.plot(xaxis, ChB[begin:end])
+        figB.show()
 
-        # fig1, ax1 = plt.subplots(1,1)    
-        plt.xlabel('samples')
-        plt.ylabel('amplitude')
-        plt.title('I component')
-        plt.plot(I[begin:end], x = xaxis, axis=ax1)
-        plt.show()
+        fig1, ax1 = plt.subplots(1,1)    
+        ax1.set_xlabel('samples')
+        ax1.set_ylabel('amplitude')
+        ax1.set_title('I component')
+        ax1.plot(xaxis, I[begin:end])
+        fig1.show()
 
-        # fig2, ax2 = plt.subplots(1,1)
-        plt.xlabel('samples')
-        plt.ylabel('amplitude')
-        plt.title('Q component')
-        pltplot(Q[begin:end], x = xaxis, axis=ax2)
-        plt.show()
+        fig2, ax2 = plt.subplots(1,1)
+        ax2.set_xlabel('samples')
+        ax2.set_ylabel('amplitude')
+        ax2.set_title('Q component')
+        ax2.plot(xaxis, Q[begin:end])
+        fig2.show()
 
-        # fig3, ax3 = plt.subplots(1,1)
-        plt.xlabel('samples')
-        plt.ylabel('amplitude')
-        plt.title('I component (filtered)')
-        plt.plot(I_f[begin:end], x = xaxis, axis=ax3)
-        plt.show()
+        fig3, ax3 = plt.subplots(1,1)
+        ax3.set_xlabel('samples')
+        ax3.set_ylabel('amplitude')
+        ax3.set_title('I component (filtered)')
+        ax3.plot(xaxis, I_f[begin:end])
+        fig3.show()
 
-        # fig4, ax4 = plt.subplots(1,1)
-        plt.xlabel('samples')
-        plt.ylabel('amplitude')
-        plt.title('Q component (filtered)')
-        plt.plot(Q_f[begin:end], x = xaxis, axis=ax4)
-        plt.show()
+        fig4, ax4 = plt.subplots(1,1)
+        ax4.set_xlabel('samples')
+        ax4.set_ylabel('amplitude')
+        ax4.set_title('Q component (filtered)')
+        ax4.plot(xaxis, Q_f[begin:end])
+        fig4.show()
 
         
-        # fig5, ax5 = plt.subplots(1,1)
-        plt.xlabel('samples')
-        plt.ylabel('amplitude')
-        plt.title('Reconstructed Amplitude')
-        plt.plot(a[begin:end], x = xaxis, axis=ax5)
-        plt.show()
+        fig5, ax5 = plt.subplots(1,1)
+        ax5.set_xlabel('samples')
+        ax5.set_ylabel('amplitude')
+        ax5.set_title('Phase Reconstructed Amplitude')
+        ax5.plot(xaxis[begin:len(a)], a[begin:end])
+        fig5.show()
+        
+        fig6, ax6 = plt.subplots(1,1)
+        ax6.set_xlabel('samples')
+        ax6.set_ylabel('amplitude')
+        ax6.set_title('Hypot Reconstructed Amplitude')
+        ax6.plot(xaxis[begin:len(a2)], a2[begin:end])
+        fig6.show()
+        
+    if plot_Fourier:
+        
+        # the channel codes are converted to volts, unless 'raw=True'
+        N = int(fs*int_time)    # number of samples in integration window.
+        fbins = np.linspace(0, fs/2, int(N/2))
+    
+        binwidth = int(1/int_time) # Hz
+        # this indexes the bins to the desired frequency bins for integrating the phase noise
+        # index = np.linspace(int(int_bw[0]), int(int_bw[1]), int(int_bw[1]-int_bw[0])+1, dtype=int)
+        
+        Sa = np.zeros(int(N/2)) # power spectrum of A
+        Sb = np.zeros(int(N/2)) # power spectrum of B
+        SsI = np.zeros(int(N/2)) # power spectrum of sin mixer term
+        SsQ = np.zeros(int(N/2)) # power spectrum of cos mixer term
+        Si = np.zeros(int(N/2)) # power spectrum of I
+        Sq = np.zeros(int(N/2)) # power spectrum of Q
+        Sif = np.zeros(int(N/2)) # power spectrum of I_f
+        Sqf = np.zeros(int(N/2)) # power spectrum of Q_f
+        
+        n_window = int(np.floor(len(I)/N))
+        
+        if suppress==False:
+            print('Doing Fourier transforms...')
+            
+        for i in range(n_window):
+            
+            if suppress==False:
+                print('...')
+            
+            start = int(i*N)
+            stop = int((i+1)*N)
+    
+            # get positive frequencies of FFT, normalize by N
+            af = fft(ChA[start:stop])[:int(N/2)]/N
+            bf = fft(ChB[start:stop])[:int(N/2)]/N
+            Ssif = fft(I_shift[start:stop])[:int(N/2)]/N
+            Ssqf = fft(Q_shift[start:stop])[:int(N/2)]/N
+            i = fft(I[start:stop])[:int(N/2)]/N
+            q = fft(Q[start:stop])[:int(N/2)]/N
+            i_f = fft(I_f[start:stop])[:int(N/2)]/N
+            q_f = fft(Q_f[start:stop])[:int(N/2)]/N
+            
+            # sum the uncorrelated variances
+            Sa += np.square(np.abs(af))
+            Sb += np.square(np.abs(bf))
+            SsI += np.square(np.abs(Ssif))
+            SsQ += np.square(np.abs(Ssqf))
+            Si += np.square(np.abs(i))
+            Sq += np.square(np.abs(q))
+            Sif += np.square(np.abs(i_f))
+            Sqf += np.square(np.abs(q_f))
+    
+        # divide by the binwidth and the number of spectrums averaged. multiply by 2 for single sided spectrum.
+        # This single-sided power spectral density has units of volts^2/Hz
+        Sa = 2*Sa/n_window/binwidth
+        Sb = 2*Sb/n_window/binwidth
+        SsI = 2*SsI/n_window/binwidth
+        SsQ = 2*SsQ/n_window/binwidth
+        Si = 2*Si/n_window/binwidth
+        Sq = 2*Sq/n_window/binwidth
+        Sif = 2*Sif/n_window/binwidth
+        Sqf = 2*Sqf/n_window/binwidth
+        
+        figg, axg = plt.subplots(1,1)
+        axg.step(fbins, 10*np.log10(Sa/np.max(Sa)), label='ChA Spectral Density')
+        axg.step(fbins, 10*np.log10(Sb/np.max(Sb)), label='ChB Spectral Density')
+        axg.step(fbins, 10*np.log10(SsI/np.max(SsI)), label='Mixer sin term Spectral Density')
+        axg.step(fbins, 10*np.log10(SsQ/np.max(SsQ)), label='Mixer cos term Spectral Density')
+        axg.set_xscale('log')
+        axg.set_xlabel('Frequency (Hertz)')
+        axg.set_ylabel(r'$\frac{dBc}{Hz}$', rotation=0, fontsize=16)
+        axg.legend(loc=2)
+        axg.set_title("Power Spectrums")
+        figg.show()
+        
+        figf, axf = plt.subplots(1,1)
+        axf.step(fbins, 10*np.log10(Si/np.max(Si)), label='I Spectral Density')
+        axf.step(fbins, 10*np.log10(Sq/np.max(Sq)), label='Q Spectral Density')
+        axf.step(fbins, 10*np.log10(Sif/np.max(Sif)), label='I filtered Spectral Density')
+        axf.step(fbins, 10*np.log10(Sqf/np.max(Sqf)), label='Q filtered Spectral Density')
+        axf.set_xscale('log')
+        axf.set_xlabel('Frequency (Hertz)')
+        axf.set_ylabel(r'$\frac{dBc}{Hz}$', rotation=0, fontsize=16)
+        axf.legend(loc=2)
+        axf.set_title("Power Spectrums")
+        figf.show()
 
     return a, avg, avg2
 

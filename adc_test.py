@@ -3,9 +3,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 
-fileraw = "C:/Users/molle/Desktop/ADC32RF45/data/10_17_2018_1497MA_15dB_3000MS_12bit_200ms_setup6.bin"
-filevoltage = "C:/Users/molle/Desktop/ADC32RF45/data/10_17_2018_1497MA_15dB_3000MS_12bit_200ms_setup6.npy"
-
+fileraw = "C:/Users/molle/Desktop/ADC32RF45/data/10_18_2018_1497MA_15dB_3000MS_12bit_20ms.bin"
+filevoltage = "C:/Users/molle/Desktop/ADC32RF45/data/10_18_2018_1497MA_15dB_3000MS_12bit_20ms.npy"
 # fileavg = '../ADC_DATA/8_3/1400_3000_100_avg_amplitude.npy'
 fo = 1.497e9
 foff = -38720 # 10 Hz accuracy (calculated with 100ms fft)
@@ -13,45 +12,21 @@ fs=3e9
 int_time = .5*1e-3
 fsr= 1.35 # ADC32RF45 fullscale range (volts)
 bits = 12
-ncalc = 400
-filter_ntaps = 100
+ncalc = 39
+filter_ntaps = 1000
 npt2n = 2**29 #= 536870912, this value is around 180ms around 3GHz sampling.
-title="Signal Power vs Resolution in Setup 6 with 20ms data captures"
-adcZ = 65 #ohms
 
-# =============================================================================
-# #little script to process data taken at various signal amplitudes
-# fileList = []
-# for i in range(-5, 16):
-#     if i < 0:
-#         binString = "C:/Users/molle/Desktop/ADC32RF45/data/10_18_2018_1497MA_m{:}dB_3000MS_12bit_20ms.bin".format(-1*i)
-#         npyString = "C:/Users/molle/Desktop/ADC32RF45/data/10_18_2018_1497MA_m{:}dB_3000MS_12bit_20ms.npy".format(-1*i)
-#     else:
-#         binString = "C:/Users/molle/Desktop/ADC32RF45/data/10_18_2018_1497MA_{:}dB_3000MS_12bit_20ms.bin".format(i)
-#         npyString = "C:/Users/molle/Desktop/ADC32RF45/data/10_18_2018_1497MA_{:}dB_3000MS_12bit_20ms.npy".format(i)
-#         
-#     t.read_binary(infile=binString, outfile=npyString, bits=bits, fsr=fsr, raw=False)
-#     fileList.append(npyString)
-#     print(i)
-# =============================================================================
-
-# powerResList = t.power_scatter(fileList, adcZ, title=title)
-
-# plt.plot(A[0:500], label="Channel A")
-# plt.plot(B[0:500], label="Channel B")
-# plt.legend(loc=2)
-# plt.title(title)
-
-t.read_binary(infile=fileraw, outfile=filevoltage, bits=12, fsr=1.35, raw=False)
+#t.read_binary(infile=fileraw, outfile=filevoltage, bits=12, fsr=1.35, raw=False)
 A, B = t.open_binary(filevoltage)
-# t.xcor_spectrum(A, B, fo, fs, int_time=int_time, n_window = ncalc, dual=True)
-resList, widthList = t.plot_res_vs_binwidth(A, B, 1e-6, 1.001e-3, 5001, log=True)
+A = A
+B = B
+#t.xcor_spectrum(A, B, fo, fs, int_time=int_time, n_window = ncalc, dual=True)
+# resList, widthList = t.plot_res_vs_binwidth(A, B, 1e-6, 1.001e-3, 5001, log=True)
 # sigma, mu, diffs = t.amplitude_asym_hist(A, B, fs=fs, bits=bits, ncalc = ncalc, pulse_width=int_time, hist=False, scatter=True)
 
 # =============================================================================
 # plt.plot(A[0:500])
 # plt.plot(B[0:500])
-
 # plt.show()
 # =============================================================================
 
@@ -91,10 +66,17 @@ resList, widthList = t.plot_res_vs_binwidth(A, B, 1e-6, 1.001e-3, 5001, log=True
 # plt.show()
 # =============================================================================
 
-# foff = t.get_freq(data=A, fs=fs, fo_nominal=fo, int_time = 10e-3, plot=False)
+tone_f, foff = t.get_freq(data=A, fs=fs, fo_nominal=fo, int_time = int_time, plot=False)
+mixoff=.1*np.pi*foff
 
-a, avg, avg2 = t.ddc(ChA=A, ChB=B, fo=fo+foff, lpf_fc=1e3, lpf_ntaps=filter_ntaps, fs = fs, bits = bits, int_time=int_time,
-                     ncalc=ncalc, calc_off=filter_ntaps+10, phase_time=int_time, nch=2, plot_en=False, plot_len=3e6, plot_win=0)
+a, avg, avg2 = t.ddc(ChA=A, ChB=B, fo=fo, foff=foff, mixoff=mixoff, lpf_fc=np.abs(mixoff), lpf_ntaps=filter_ntaps, 
+                     fs = fs, bits = bits, int_time=int_time, ncalc=ncalc, calc_off=filter_ntaps+10,
+                     phase_time=int_time, nch=2, plot_en=True, plot_len=3e6, plot_win=0,
+                     plot_Fourier=True, filt="IIR", suppress=False)
+
+ppm = 1e6*np.std(avg[0])/np.mean(avg[0])
+print('Phase reconstructed ChA amplitude is {0:.3f} volts with {1:.3f} ppm error'.format(np.mean(avg[0]), ppm))
+
 
 #print('amplitude distribution =', np.std(avg[0]/avg[1]), 'sigma (phase reconstruction)\n')
 #print('amplitude distribution =', np.std(avg2[0]/avg2[1]), 'sigma (hypotenuse reconstruction)')
