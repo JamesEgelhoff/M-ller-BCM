@@ -12,14 +12,15 @@ fs=3e9
 int_time = .5*1e-3
 fsr= 1.35 # ADC32RF45 fullscale range (volts)
 bits = 12
-ncalc = 39
-filter_ntaps = 1000
+ncalc = 40
+filter_ntaps = 1024
 npt2n = 2**29 #= 536870912, this value is around 180ms around 3GHz sampling.
 
 #t.read_binary(infile=fileraw, outfile=filevoltage, bits=12, fsr=1.35, raw=False)
 A, B = t.open_binary(filevoltage)
-A = A
-B = B
+#shorten A&B to save memory if full length of channel data isn't being used
+A = A[:int(ncalc*fs*int_time)]
+B = B[:int(ncalc*fs*int_time)]
 #t.xcor_spectrum(A, B, fo, fs, int_time=int_time, n_window = ncalc, dual=True)
 # resList, widthList = t.plot_res_vs_binwidth(A, B, 1e-6, 1.001e-3, 5001, log=True)
 # sigma, mu, diffs = t.amplitude_asym_hist(A, B, fs=fs, bits=bits, ncalc = ncalc, pulse_width=int_time, hist=False, scatter=True)
@@ -72,10 +73,7 @@ mixoff=.1*np.pi*foff
 a, avg, avg2 = t.ddc(ChA=A, ChB=B, fo=fo, foff=foff, mixoff=mixoff, lpf_fc=np.abs(mixoff), lpf_ntaps=filter_ntaps, 
                      fs = fs, bits = bits, int_time=int_time, ncalc=ncalc, calc_off=filter_ntaps+10,
                      phase_time=int_time, nch=2, plot_en=True, plot_len=3e6, plot_win=0,
-                     plot_Fourier=True, filt="IIR", suppress=False)
-
-ppm = 1e6*np.std(avg[0])/np.mean(avg[0])
-print('Phase reconstructed ChA amplitude is {0:.3f} volts with {1:.3f} ppm error'.format(np.mean(avg[0]), ppm))
+                     plot_Fourier=True, filt="butter", suppress=False, amp_res=True)
 
 
 #print('amplitude distribution =', np.std(avg[0]/avg[1]), 'sigma (phase reconstruction)\n')

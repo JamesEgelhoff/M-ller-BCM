@@ -2,7 +2,7 @@
 import numpy as np
 from scipy.fftpack import fft, rfft
 from scipy.integrate import trapz
-from scipy.signal import medfilt, butter, bessel, firwin, lfilter, freqz, decimate, periodogram, welch, iirdesign
+from scipy.signal import medfilt, butter, bessel, firwin, lfilter, freqz, decimate, periodogram, welch, iirdesign, get_window, firls
 from scipy.stats import norm
 
 # plotting
@@ -11,10 +11,13 @@ from matplotlib import axes
 ax_obj = axes.Axes
 import seaborn as sns
 
-def define_fir_lpf(numtap, cutoff, fs) :
+def define_fir_lpf(numtap, cutoff, fs, window=None) :
     nyq = 0.5 * fs
     normalized_cutoff = cutoff / nyq
-    b = firwin(numtap, normalized_cutoff)
+    if window != None:
+        b = firwin(numtap, normalized_cutoff, window=window)
+    else:
+        b = firwin(numtap, normalized_cutoff)
     a = 1
     return b, a
 
@@ -344,7 +347,7 @@ def res_plot(A_avg, B_avg, ax_h=None, ax_s=None) :
 
 
 def ddc(ChA, ChB, fo, foff, mixoff, lpf_fc, lpf_ntaps, fs, bits, int_time, ncalc, calc_off, phase_time, nch, 
-        plot_en, plot_len, plot_win, plot_Fourier=False, filt='FIR', suppress=True) :
+        plot_en, plot_len, plot_win, plot_Fourier=False, filt='FIR', suppress=True, amp_res=False) :
     
     
     ''' 
@@ -380,19 +383,86 @@ def ddc(ChA, ChB, fo, foff, mixoff, lpf_fc, lpf_ntaps, fs, bits, int_time, ncalc
 
     binwidth = int(1/int_time)
     
-    if filt=="FIR":     
-        # this lowpass filter is for the digital downconversion
+    #default FIR settings (Hamming window)
+    if filt=="FIR":
         cutoff = lpf_fc
+        nyq = 0.5 * fs
         b0, a0 = define_fir_lpf(numtap=lpf_ntaps, cutoff=lpf_fc, fs=fs)
         # b2, a2 = define_fir_hpf(numtap=15, cutoff=hpf_fc, fs)
         w, h = freqz(b0, a0, worN=3000000)
+    
+    #FIR w/ flattop window
+    if filt=='flattop':
+        cutoff = lpf_fc
+        nyq = 0.5 * fs
+        b0, a0 = define_fir_lpf(numtap=lpf_ntaps, cutoff=lpf_fc, fs=fs, window=filt)
+        # b2, a2 = define_fir_hpf(numtap=15, cutoff=hpf_fc, fs)
+        w, h = freqz(b0, a0, worN=3000000)
         
+    #FIR w/ Dolph-Chebyshev window
+    if filt=='chebwin':
+        cutoff = lpf_fc
+        nyq = 0.5 * fs
+        at = 60
+        b0, a0 = define_fir_lpf(numtap=lpf_ntaps, cutoff=lpf_fc, fs=fs, window=(filt, at))
+        # b2, a2 = define_fir_hpf(numtap=15, cutoff=hpf_fc, fs)
+        w, h = freqz(b0, a0, worN=3000000)
+    
+    #FIR w/ least squares window
+    if filt=='leastsq':
+        if np.mod(lpf_ntaps, 2)==0:
+            lpf_ntaps = lpf_ntaps + 1
+        cutoff = lpf_fc
+        nyq = 0.5 * fs
+        bands = [cutoff, cutoff*10, cutoff*100, nyq]
+        a0 = 1
+        b0 = firls(lpf_ntaps, bands, [1,0, 0, 0], nyq=nyq)
+        # b2, a2 = define_fir_hpf(numtap=15, cutoff=hpf_fc, fs)
+        w, h = freqz(b0, a0, worN=3000000)
+    
+    #default IIR settings (ellip)
     if filt=="IIR":
         cutoff=lpf_fc*2
         nyq = 0.5 * fs
         normalized_pass = cutoff / nyq
         normalized_stop = 100*cutoff / nyq
-        b0, a0 = iirdesign(normalized_pass, normalized_stop, .1, 30)
+        b0, a0 = iirdesign(normalized_pass, normalized_stop, .3, 80)
+        w, h = freqz(b0, a0, worN=3000000)
+    
+    #butterworth IIR
+    if filt=="butter":
+        cutoff=lpf_fc*2
+        nyq = 0.5 * fs
+        normalized_pass = cutoff / nyq
+        normalized_stop = 100*cutoff / nyq
+        b0, a0 = iirdesign(normalized_pass, normalized_stop, .3, 80, ftype=filt)
+        w, h = freqz(b0, a0, worN=3000000)
+        
+    #Chebyshev 1 IIR
+    if filt=="cheby1":
+        cutoff=lpf_fc*2
+        nyq = 0.5 * fs
+        normalized_pass = cutoff / nyq
+        normalized_stop = 100*cutoff / nyq
+        b0, a0 = iirdesign(normalized_pass, normalized_stop, .3, 80, ftype=filt)
+        w, h = freqz(b0, a0, worN=3000000)
+    
+    #Chebyshev 2 IIR
+    if filt=="cheby2":
+        cutoff=lpf_fc*2
+        nyq = 0.5 * fs
+        normalized_pass = cutoff / nyq
+        normalized_stop = 100*cutoff / nyq
+        b0, a0 = iirdesign(normalized_pass, normalized_stop, .3, 80, ftype=filt)
+        w, h = freqz(b0, a0, worN=3000000)
+        
+    #Bessel IIR
+    if filt=="bessel":
+        cutoff=lpf_fc*2
+        nyq = 0.5 * fs
+        normalized_pass = cutoff / nyq
+        normalized_stop = 100*cutoff / nyq
+        b0, a0 = iirdesign(normalized_pass, normalized_stop, .3, 80, ftype=filt)
         w, h = freqz(b0, a0, worN=3000000)
     
     # figf, axf = plt.subplots(1,1)
@@ -477,10 +547,10 @@ def ddc(ChA, ChB, fo, foff, mixoff, lpf_fc, lpf_ntaps, fs, bits, int_time, ncalc
     
     if plot_en :
         
-        if filt=="FIR":
-            begin = lpf_ntaps
-        if filt=="IIR":
+        if (filt=="IIR" or filt=="butter" or filt=="cheby1" or filt=="cheby2" or filt=="ellip" or filt=="bessel"):
             begin=0
+        else:
+            begin=lpf_ntaps
         off = plot_win*l
         plot_len = int(plot_len)
         xaxis = np.arange(begin, plot_len)
@@ -628,9 +698,64 @@ def ddc(ChA, ChB, fo, foff, mixoff, lpf_fc, lpf_ntaps, fs, bits, int_time, ncalc
         axf.set_xscale('log')
         axf.set_xlabel('Frequency (Hertz)')
         axf.set_ylabel(r'$\frac{dBc}{Hz}$', rotation=0, fontsize=16)
-        axf.legend(loc=2)
+        axf.legend(loc=3)
         axf.set_title("Power Spectrums")
         figf.show()
+    
+    #starting at second pulse window calculate amplitude asymmetry resolution of phase reconstructed amplitude
+    if amp_res:
+        
+        A = avg[0][2:]
+        B = avg[1][2:]
+        
+        calcs = len(A)
+        
+        Apairs = []
+        Bpairs = []
+        
+        for i in range(0, calcs, 2) :
+            
+            #start with A
+            a1 = A[i]
+            a2 = A[i+1]
+            Apairs.append([a1,a2])
+            
+            #same process for B
+            b1 = B[i]
+            b2 = B[i+1]
+            Bpairs.append([b1,b2])
+        
+        #convert lists to arrays to make calculations easier
+        Apairs = np.array(Apairs)
+        Bpairs = np.array(Bpairs)
+    
+        #calculate relative differences within channels
+        Adiffs = (Apairs[:,0] - Apairs[:,1])/(Apairs[:,0] + Apairs[:,1])
+        Bdiffs = (Bpairs[:,0] - Bpairs[:,1])/(Bpairs[:,0] + Bpairs[:,1])
+        
+        #calculate differences between channels
+        diffs = Adiffs - Bdiffs
+    
+        #stat params
+        sigma = np.std(diffs)
+        mu = np.mean(diffs)
+        
+        print('Amplitude asymmetry resolution: {:.3f} ppm'.format(1e6*sigma))
+        
+        #histogram plot the difference in amplitude asymmetry differences between channels
+        figh, axh = plt.subplots(1,1)
+        y,x,_ = axh.hist(diffs*1e6, range = (-int(3*sigma*1e6), int(3*sigma*1e6)), bins=20)
+        axh.set_xlabel('Amplitude Asymmetry Difference (PPM)')
+        axh.text(-int(2.5*sigma*1e6), y.max(), s='Sigma={0:.3f} PPM'.format(sigma*1e6))
+        axh.set_title('Phase reconstructed amplitude asymmetry resolution')
+        figh.show()
+        
+        figi, axi = plt.subplots(1,1)
+        axi.scatter(Adiffs*1e6, Bdiffs*1e6)
+        axi.set_xlabel('Channel A asymmetry (PPM)')
+        axi.set_ylabel('Channel B asymmetry (PPM)')
+        axi.set_title('Phase reconstructed amplitude asymmetry resolution')
+        figi.show()
 
     return a, avg, avg2
 
@@ -864,4 +989,3 @@ def power_scatter(fileList, adcZ, fs=3e9, bits=12, pulse_width=5e-4, title=""):
     plt.show()
     
     return powerResList
-    
