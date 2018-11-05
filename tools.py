@@ -2,7 +2,7 @@
 import numpy as np
 from scipy.fftpack import fft, rfft
 from scipy.integrate import trapz
-from scipy.signal import medfilt, butter, bessel, firwin, lfilter, freqz, decimate, periodogram, welch, iirdesign, get_window, firls
+from scipy.signal import medfilt, butter, bessel, firwin, lfilter, freqz, decimate, periodogram, welch, iirdesign, get_window, firls, find_peaks_cwt
 from scipy.stats import norm
 
 # plotting
@@ -74,7 +74,7 @@ def plot(d, x, axis = None) :
         
         plt.close()
 
-def read_binary(infile, outfile, bits=12, fsr=1.35, raw=None) :
+def read_binary(infile, outfile, bits=12, fsr=1.35, send='mid', dtype=np.int16, nchannels=2) :
     '''
     this reads a binary file interpreted as series of 16bit integers, as is the case for our ADC's binary codes.
     two arrays of data are returned, for the adc's channel A and channel B.
@@ -85,18 +85,35 @@ def read_binary(infile, outfile, bits=12, fsr=1.35, raw=None) :
     fsr- full scale range of the ADC in volts peak to peak
     raw- Set to true to return the raw ADC codes instead of converted voltage values
     '''
+    
     maxcode = 2**bits
     midpoint = 2**(bits-1)
-    if raw :
-        out = np.fromfile(infile, dtype=np.int16, count=-1, sep="")
-    else :
-        data = (np.fromfile(infile, dtype=np.int16, count=-1, sep="")-(midpoint))*fsr/(maxcode)
-        out = np.stack((data[0::2], data[1::2]))
+        
+    if send=='raw' :
+        data = np.fromfile(infile, dtype=dtype, count=-1, sep="")
+        out=[]
+        for i in range(nchannels) :
+            out.append(data[i::nchannels])
+        out = np.array(out)
+    if send=='mid' : 
+        dat = np.fromfile(infile, dtype=dtype, count=-1, sep="")
+        data = (dat.astype(np.int32)-midpoint)*fsr/maxcode
+        out=[]
+        for i in range(nchannels) :
+            out.append(data[i::nchannels])
+        out = np.array(out)
+    if send=='float':
+        data = np.fromfile(infile, dtype=dtype, count=-1, sep="")
+        out=[]
+        for i in range(nchannels) :
+            out.append(data[i::nchannels])
+        out = np.array(out) * fsr/maxcode
+        
     np.save(outfile, out)
 
-def open_binary(infile) :
+def open_binary(infile, nchannels=2) :
     data = np.load(infile)
-    return data[0], data[1]
+    return data
 
 
 def make_data(outfile, A, fo, fs, jitter_fs, int_time, n_window) :
@@ -177,7 +194,7 @@ def get_freq(data, fs, fo_nominal, int_time, ssb_bw_guess=None, npt2n=False, plo
     
     return tone_f, f_off
 
-def xcor_spectrum(ChA, ChB, fo, fs, nbits=12, int_time=1e-3, n_window=99, plot=False, dual=False, dualTitle="") :
+def xcor_spectrum(ChA, ChB, fo, fs, nbits=12, int_time=.5e-3, n_window=99, plot=False, dual=False, dualTitle="") :
     '''calculate the fourier spectrum of the adc's digitized signal.
     convert spectrum to units of dBc/Hz (decibels normalized to the carrier power in 1Hz bandwidth).
     calculate the jitter contribution in some specified bandwidth relative to the carrier.
@@ -200,9 +217,17 @@ def xcor_spectrum(ChA, ChB, fo, fs, nbits=12, int_time=1e-3, n_window=99, plot=F
     Saa = np.zeros(int(N/2)) # power spectrum of channel A
     Sbb = np.zeros(int(N/2)) # power spectrum of channel B
     Sba = np.zeros(int(N/2), dtype=np.complex128) # cross correlation spectrum of channels A and B
-
+    
+    #determine the number of samples taken per pulse
+    valsPerBin = int(fs*int_time)
+    #figure out how many windows to calculate over
+    if n_window == "auto":
+        n_window = int(np.floor(len(ChA)/valsPerBin))
+        print("xcor_spectrum n_window={:}".format(n_window))
+    
     for i in range(n_window):
-        print(i)
+        if np.mod(i,10)==0.:
+            print("xcor_spectrum window {} is calculating...".format(i))
         start = int(i*N)
         stop = int((i+1)*N)
 
@@ -284,14 +309,15 @@ def xcor_spectrum(ChA, ChB, fo, fs, nbits=12, int_time=1e-3, n_window=99, plot=F
         fig_D.show()
         
     if dual:
-        plt.step(fbins, 10*np.log10(Saa/np.max(Saa)), label='CH A Noise Spectral Density')
-        plt.step(fbins, 10*np.log10(Sbb/np.max(Sbb)), label='CH B Noise Spectral Density')
-        plt.xscale('log')
-        plt.xlabel('Frequency (Hertz)')
-        plt.ylabel(r'$\frac{dBc}{Hz}$', rotation=0, fontsize=16)
-        plt.legend(loc=2)
-        plt.title(dualTitle)
-        plt.show()
+        fig_E, ax_E = plt.subplots(1,1)
+        ax_E.step(fbins, 10*np.log10(Saa/np.max(Saa)), label='CH A Noise Spectral Density')
+        ax_E.step(fbins, 10*np.log10(Sbb/np.max(Sbb)), label='CH B Noise Spectral Density')
+        ax_E.set_xscale('log')
+        ax_E.set_xlabel('Frequency (Hertz)')
+        ax_E.set_ylabel(r'$\frac{dBc}{Hz}$', rotation=0, fontsize=16)
+        ax_E.legend(loc=2)
+        ax_E.set_title(dualTitle)
+        fig_E.show()
 
     tone_a = np.argmax(Saa)*binwidth
     tone_b = np.argmax(Sbb)*binwidth
@@ -466,7 +492,7 @@ def ddc(ChA, ChB, fo, foff, mixoff, lpf_fc, lpf_ntaps, fs, bits, int_time, ncalc
         w, h = freqz(b0, a0, worN=3000000)
     
     # figf, axf = plt.subplots(1,1)
-    plt.plot(0.5*fs*w/np.pi, np.abs(h), 'b')
+    plt.plot(0.5*fs*w/np.pi, 10*np.log10(np.abs(h)), 'b')
     plt.plot(np.abs(mixoff), 0.5*np.sqrt(2), 'ko')
     plt.axvline(cutoff, color='k')
     if filt=="IIR":
@@ -474,14 +500,17 @@ def ddc(ChA, ChB, fo, foff, mixoff, lpf_fc, lpf_ntaps, fs, bits, int_time, ncalc
     #plt.xlim(0, 0.5*fs)
     plt.title("Lowpass Filter Frequency Response")
     plt.xlabel('Frequency [Hz]')
+    plt.ylabel('Voltage Gain (dB)')
     plt.xscale('log')
-    plt.yscale('log')
+    #plt.yscale('log')
     plt.grid()
     plt.show()
 
     # arrays to store average amplitudes
     avg = np.zeros((nch,ncalc))
     avg2 = np.zeros((nch,ncalc))
+    #array for storing raw signal amplitude info
+    raw_avgs = np.zeros((nch, ncalc))
     
     # number of samples in integration window
     l = int(int_time*fs)
@@ -518,6 +547,11 @@ def ddc(ChA, ChB, fo, foff, mixoff, lpf_fc, lpf_ntaps, fs, bits, int_time, ncalc
 # =============================================================================
             I[y:z] = Ch[k][y:z]*I_shift[y:z]
             Q[y:z] = Ch[k][y:z]*Q_shift[y:z]
+            
+            #find approximate raw signal amplitude over the bin for diagnostics
+            peak = np.max(Ch[k][y:z])
+            trough = np.min(Ch[k][y:z])
+            raw_avgs[k][i] = (peak - trough)/2
 
         # low pass filter frequency down-mixed data
         I_f = lfilter(b0, a0, I)
@@ -543,7 +577,6 @@ def ddc(ChA, ChB, fo, foff, mixoff, lpf_fc, lpf_ntaps, fs, bits, int_time, ncalc
             # average amplitude recovered from I,Q components
             avg[k][i] = np.mean(a)
             avg2[k][i] = np.mean(a2)
-
     
     if plot_en :
         
@@ -757,7 +790,7 @@ def ddc(ChA, ChB, fo, foff, mixoff, lpf_fc, lpf_ntaps, fs, bits, int_time, ncalc
         axi.set_title('Phase reconstructed amplitude asymmetry resolution')
         figi.show()
 
-    return a, avg, avg2
+    return a, avg, avg2, raw_avgs
 
 def calibrate(A, B, fsr=1.35, bits=12, ax1=None, ax2=None) :
     ''' make a 2D scatter plot of A and B.
@@ -811,7 +844,7 @@ def calibrate(A, B, fsr=1.35, bits=12, ax1=None, ax2=None) :
     input('press enter to finish calibration')
     return val, bins, slope, offset
     
-def amplitude_asym_hist(ChA, ChB, fs=3e9, bits=12, ncalc="auto", pulse_width=5e-4, hist=True, scatter=False, title=""):
+def amplitude_asym_hist(ChA, ChB, fs=3e9, ncalc="auto", pulse_width=5e-4, hist=True, scatter=False, title="", suppress=False):
     
     
     ''' 
@@ -842,10 +875,11 @@ def amplitude_asym_hist(ChA, ChB, fs=3e9, bits=12, ncalc="auto", pulse_width=5e-
     
     if ncalc == "auto":
         ncalc = int(np.floor(len(ChA)/valsPerBin))
-        print("ncalc={:}".format(ncalc))
+        if suppress==False:
+            print("ncalc={:}".format(ncalc))
 
     #populate Apairs & Bpairs with bin averaged RMS amplitudes
-    for i in range(0, ncalc, 2) :
+    for i in range(1, ncalc, 2) :
 
         #start with A
         a1 = ChA[i*valsPerBin:(i+1)*valsPerBin-1]
@@ -861,7 +895,8 @@ def amplitude_asym_hist(ChA, ChB, fs=3e9, bits=12, ncalc="auto", pulse_width=5e-
         b2RMS = np.sqrt(np.dot(b2,b2))
         Bpairs.append([b1RMS,b2RMS])
         
-        print(i)
+        if (np.mod(i, 10)==0 and suppress==False):
+            print('Calculating window {} in amplitude resolution...'.format(i))
 
     #convert lists to arrays to make calculations easier
     Apairs = np.array(Apairs)
@@ -880,23 +915,25 @@ def amplitude_asym_hist(ChA, ChB, fs=3e9, bits=12, ncalc="auto", pulse_width=5e-
 
     #histogram plot the difference in amplitude asymmetry differences between channels
     if hist :
-        y,x,_ = plt.hist(diffs*1e6, range = (-int(3*sigma*1e6), int(3*sigma*1e6)), bins=20)
-        plt.xlabel('Amplitude Asymmetry Difference (PPM)')
-        plt.text(-int(2.5*sigma*1e6), y.max(), s='Sigma={0:.3f} PPM'.format(sigma*1e6))
-        plt.title(title)
-        plt.show()
+        f1, a1 = plt.subplots(1,1)
+        y,x,_ = a1.hist(diffs*1e6, range = (-int(3*sigma*1e6), int(3*sigma*1e6)), bins=20)
+        a1.set_xlabel('Amplitude Asymmetry Difference (PPM)')
+        a1.text(-int(2.5*sigma*1e6), y.max(), s='Sigma={0:.3f} PPM'.format(sigma*1e6))
+        a1.set_title(title)
+        f1.show()
     
     #scatter plot
     if scatter :
-        plt.scatter(Adiffs*1e6, Bdiffs*1e6)
-        plt.xlabel('Channel A asymmetry (PPM)')
-        plt.ylabel('Channel B asymmetry (PPM)')
-        plt.title(title)
-        plt.show()
+        f2, a2 = plt.subplots(1,1)
+        a2.scatter(Adiffs*1e6, Bdiffs*1e6)
+        a2.set_xlabel('Channel A asymmetry (PPM)')
+        a2.set_ylabel('Channel B asymmetry (PPM)')
+        a2.set_title(title)
+        f1.show()
 
     return sigma, mu, diffs
 
-def plot_res_vs_binwidth(ChA, ChB, minWidth, maxWidth, steps, title, ncalc = 30, fs=3e9, bits=12, log=False) :
+def plot_res_vs_binwidth(ChA, ChB, minWidth, maxWidth, steps, title, ncalc = 30, fs=3e9, log=False) :
     
     ''' 
     calculates resolution as a function of bin width and plots it
@@ -917,24 +954,26 @@ def plot_res_vs_binwidth(ChA, ChB, minWidth, maxWidth, steps, title, ncalc = 30,
     
     #loop to calculate resolutions at various bin widths
     for i in range(0,len(widthList)) :
-        print('Calculating resolution for {0:f} millisecond pulse windows'.format(1e3*widthList[i]))
-        res, mu, diffs = amplitude_asym_hist(ChA, ChB, fs=fs, bits=bits, ncalc=ncalc, pulse_width=widthList[i], hist=False, scatter=False)
+        if np.mod(i, 300)==0:
+            print('Calculating resolution for {0:f} millisecond pulse windows'.format(1e3*widthList[i]))
+        res, mu, diffs = amplitude_asym_hist(ChA, ChB, fs=fs, ncalc=ncalc, pulse_width=widthList[i], hist=False, scatter=False, suppress=True)
         resList[i] = res
     
+    fig, ax = plt.subplots(1,1)
     if log==False :
-        plt.plot(widthList*1e3, resList*1e6, '.')
-        plt.xlabel('Pulse width (ms)')
-        plt.ylabel('Resolution (PPM)')
-        plt.title(title)
-        plt.show()
+        ax.plot(widthList*1e3, resList*1e6, '.')
+        ax.set_xlabel('Pulse width (ms)')
+        ax.set_ylabel('Resolution (PPM)')
+        ax.set_title(title)
+        fig.show()
     else:
-        plt.plot(widthList*1e3, resList*1e6, '.')
-        plt.xscale('log')
-        plt.yscale('log')
-        plt.xlabel('Pulse width (ms)')
-        plt.ylabel('Resolution (PPM)')
-        plt.title(title)
-        plt.show()
+        ax.plot(widthList*1e3, resList*1e6, '.')
+        ax.set_xscale('log')
+        ax.set_yscale('log')
+        ax.set_xlabel('Pulse width (ms)')
+        ax.set_ylabel('Resolution (PPM)')
+        ax.set_title(title)
+        fig.show()
     
     return resList, widthList
 
@@ -989,3 +1028,36 @@ def power_scatter(fileList, adcZ, fs=3e9, bits=12, pulse_width=5e-4, title=""):
     plt.show()
     
     return powerResList
+
+def DDC_amplitudes(A_I, A_Q, B_I, B_Q, plot=True, title="") :
+    """
+    Takes four output streams from a DDC signal and recombines them into two streams
+    giving the signal amplitudes for channels A&B
+    
+    Inputs:
+    A_I/A_Q/B_I/B_Q: down mixed streams outputted by DDC
+    plot: boolean instruction whether to plot amplitudes for first 800 samples
+    title: title for plot
+    
+    Outputs:
+    A_amp: hypot reconstructed amplitude of channel A
+    B_amp: hypot reconstructed amplitude of channel B
+    """
+    
+    #calculate hypotenuse reconstructed amplitudes pointwise along channels A and B
+    A_amp = np.hypot(A_I, A_Q)
+    B_amp = np.hypot(B_I, B_Q)
+    
+    #plot it
+    if plot:
+        fig, ax = plt.subplots(1,1)
+        ax.plot(A_amp[0:800])
+        ax.plot(B_amp[0:800])
+        ax.set_title(title)
+        ax.set_ylabel("Hypotenuse reconstructed amplitude")
+        ax.set_xlabel("Sample number")
+        fig.show()
+    
+    return A_amp, B_amp
+    
+    
