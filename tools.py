@@ -1,8 +1,8 @@
 # math
 import numpy as np
-from scipy.fftpack import fft, rfft
+from scipy.fftpack import fft, rfft, fftshift
 from scipy.integrate import trapz
-from scipy.signal import medfilt, butter, bessel, firwin, lfilter, freqz, decimate, periodogram, welch, iirdesign, get_window, firls, find_peaks_cwt
+from scipy.signal import medfilt, butter, bessel, firwin, lfilter, freqz, decimate, periodogram, welch, iirdesign, get_window, firls, find_peaks
 from scipy.stats import norm
 
 # plotting
@@ -189,8 +189,6 @@ def get_freq(data, fs, fo_nominal, int_time, ssb_bw_guess=None, npt2n=False, plo
         # ax_A.step(fbins, 10*np.log10(2*np.square(v)/(N*binwidth)))
         ax_A.step(fbins, 10*np.log10(v/np.max(v)))
         fig_A.show()
-
-    input('press enter to finish frequency script.')
     
     return tone_f, f_off
 
@@ -199,7 +197,7 @@ def xcor_spectrum(ChA, ChB, fo, fs, nbits=12, int_time=.5e-3, n_window=99, plot=
     convert spectrum to units of dBc/Hz (decibels normalized to the carrier power in 1Hz bandwidth).
     calculate the jitter contribution in some specified bandwidth relative to the carrier.
     input:
-    file- string giving binary file containing data
+    
     fo- expected carrier frequency
     fs- ADC sampling clock frequency
     int_time- integration time in seconds.
@@ -879,7 +877,7 @@ def amplitude_asym_hist(ChA, ChB, fs=3e9, ncalc="auto", pulse_width=5e-4, hist=T
             print("ncalc={:}".format(ncalc))
 
     #populate Apairs & Bpairs with bin averaged RMS amplitudes
-    for i in range(1, ncalc, 2) :
+    for i in range(0, ncalc, 2) :
 
         #start with A
         a1 = ChA[i*valsPerBin:(i+1)*valsPerBin-1]
@@ -1045,8 +1043,8 @@ def DDC_amplitudes(A_I, A_Q, B_I, B_Q, plot=True, title="") :
     """
     
     #calculate hypotenuse reconstructed amplitudes pointwise along channels A and B
-    A_amp = np.hypot(A_I, A_Q)
-    B_amp = np.hypot(B_I, B_Q)
+    A_amp = 2*np.hypot(A_I, A_Q)
+    B_amp = 2*np.hypot(B_I, B_Q)
     
     #plot it
     if plot:
@@ -1060,4 +1058,371 @@ def DDC_amplitudes(A_I, A_Q, B_I, B_Q, plot=True, title="") :
     
     return A_amp, B_amp
     
+def downmix(signal, fs, ms, single=None, offset=0) :
+    """
+    Down mixes a signal and returns the I and Q data streams.
+    
+    Inputs:
+    signal: input signal data
+    fs: signal sampling frequency
+    ms: mixer frequency
+    fixAmp: if true, returned values of I and Q are doubled to account for halving of amplitude during downmixing
+    single: instead of downmixing to Q and I, can just dowmix to Q or I. If single=Q mix to Q only, if single=I mix to I only
+    offset: phase offset
+    
+    Outputs:
+    I: signal * sin
+    Q: signal * cos
+    """
+    
+    #length of signal in time
+    deltat = len(signal) / fs
+    
+    #array of time values for producing mixer signal
+    time = np.linspace(0, deltat, len(signal))
+    
+    if single=="I":
+        
+        #calculate & return I
+        mixI = np.sin(time*ms+offset)
+        return mixI
+    
+    elif single=="Q":
+        
+        #calculate & return Q
+        mixQ = np.cos(time*ms+offset)
+        return mixQ
+    
+    else:
+        
+        #mixer signals
+        mixQ = np.cos(time*ms+offset)
+        mixI = np.sin(time*ms+offset)
+        
+        #calculate I & Q
+        I = signal * mixI
+        Q = signal * mixQ
+        
+        return Q, I
+
+def single_sideband(signal, fs, ms, dual=False) :
+    """
+    Takes a downmixed signal and returns the lower and upper sidebands
+    
+    Inputs:
+    signal: input signal data.
+        If inputing a downmixed dual stream format as signal=[Q,I] and set dual=True
+    fs: downmixed signal sampling frequency
+    ms: mixer frequency
+    decim: downconversion factor
+    
+    Outputs;
+    Hssb: higher sideband signal
+    Lssb: lower sideband signal
+    """
+    
+    if dual:
+        Q = signal[0]
+        I = signal[1]
+        
+    else:
+        Q, I = downmix(signal, fs, ms)
+        
+    IQ, II = downmix(I, fs, ms)
+    QQ, QI = downmix(Q, fs, ms)
+    
+    #produce original downmixed signal and its Hilbert transform
+    s = II+QQ
+    shilb = IQ-QI
+    
+    #modulation
+    Scos, Ssin = downmix(s, fs, ms)
+    shilbCos, shilbSin = downmix(shilb, fs, ms)
+    
+    #calculate upper and lower sidebands
+    Hssb = Scos - shilbSin
+    Lssb = Scos + shilbSin
+    
+    return Hssb, Lssb
+
+def FFT_plot(signalList, fs, int_time, scale='symlog', labels=False, returnFigAx=False) :
+    """
+    Plots the complex FFT of a array of signals
+    
+    Inputs:
+    signalList: list of signals to plot. Formatted like [signal1, ..., signalN]
+    fs: sampling frequency of signals
+    int_time: binwidth in time
+    labels: determines whether plot will have labels & legend. If not false, formatted like ["label 1", ..., "label n"].
+        - Must be same length as signalList
+    returnFigAx: if true, doesn't plot, but returns fig and ax for further modification
+    """
+    
+    N = int(fs*int_time)    # number of samples in integration window.
+
+    binwidth = int(1/int_time) # Hz
+    
+    #determine the number of samples taken per pulse
+    valsPerBin = int(fs*int_time)
+    
+    S = []
+    fig, ax = plt.subplots(1,1)
+    fbins = np.linspace(-fs/2, fs/2, N)
+    for j in range(len(signalList)):
+        
+        #temporary variable to hold spectrum for jth signal
+        Sj =  np.zeros(N)
+        
+        #figure out how many windows to calculate over
+        n_window = int(np.floor(len(signalList[j])/valsPerBin))
+        
+        print('Working on plotting signal {}'.format(j+1))
+        
+        for i in range(n_window):
+            start = int(i*N)
+            stop = int((i+1)*N)
+    
+            # get frequencies of FFT, normalize by N
+            a = fft(signalList[j][start:stop])/N
+            
+            #shift frequencies into proper bins for plotting
+            a = fftshift(a)
+            
+            # sum the uncorrelated variances
+            Sj += np.abs(a)
+            
+        # divide by the binwidth and the number of spectrums averaged
+        # This single-sided power spectral density has units of volts^2/Hz
+        Sj = Sj/n_window/binwidth
+        Sj = Sj**2 # convert to power spectrum
+        if labels!= False:
+            ax.step(fbins, 10*np.log10(Sj/np.max(Sj)), label=labels[j])
+        else:
+            ax.step(fbins, 10*np.log10(Sj/np.max(Sj)))
+        
+    ax.set_xscale(scale)
+    ax.set_xlabel('Frequency (Hertz)')
+    ax.set_ylabel(r'$\frac{dBc}{Hz}$', rotation=0, fontsize=16)
+    if labels!=False:
+        ax.legend(loc=2)
+    
+    if returnFigAx==False:    
+        fig.show()
+    else:
+        return fig, ax
+    
+def decimate(signal, decim):
+    """
+    Takes a signal and downsamples it
+    
+    Inputs:
+    signal: input to be downsampled
+    decim: decimation factor
+    
+    Output:
+    downsamp: downsampled signal
+    """
+    
+    downsamp = signal[::int(decim)]
+    
+    return downsamp
+
+def phase_reconstruction(Q, I, fs, fo, ms):
+    """
+    Performs quadrature phase reconstruction on a downmixed & filtered signal
+    
+    Inputs:
+    Q: cos modulated signal
+    I: sin modulated signal
+    fs: sample frequency
+    fo: signal frequency
+    ms: mixer frequency
+    
+    Outputs:
+    amps: array of amplitude at each point
+    """
+    
+    #calculate deltaW
+    deltaW = np.abs(fo-ms)
+    
+    #mix to quadrature
+    QQ, QI = downmix(Q, fs, deltaW)
+    IQ, II = downmix(I, fs, deltaW)
+    
+    #convert data into real and complex components
+    cosAve = (QQ-II)
+    sinAve = (-QI-IQ)
+    
+    offset = np.arctan2(sinAve, cosAve)
+    
+    #phase rotate and calculate amps
+    cos2 = downmix(cosAve, fs, 0, single="Q", offset=0)
+    sin2 = downmix(sinAve, fs, 0, single="I", offset=0)
+    
+    amps = cos2 + sin2
+    
+    hyp = np.hypot(cosAve, sinAve)
+    
+    return amps, hyp
+    
+def DDC2(signal, fs, fo, ms, decim, int_time):
+    
+    """
+    Rewritten, simplified DDC algorithm.
+    
+    Inputs:
+    signal: signal to be DDCed
+    fs: signal freqency
+    ms: mixer frequency
+    decim: how much to downsample the signal
+    
+    Outputs:
+    phase: phase reconstructed amplitude signal
+    avgPhase: phase reconstructed averaged amplitudes
+    hyp: hypotenuse reconstructed amplitude signal
+    avgHyp: hypotenuse reconstructed averaged amplitudes
+    """
+    #downmix & downsample the signal
+    Q, I = downmix(signal, fs, ms)
+    Q = decimate(Q, decim)
+    I = decimate(I, decim)
+    
+    #take the upper sidebands
+    upperQ, lowerQ = single_sideband(Q, fs, ms)
+    upperI, lowerI = single_sideband(I, fs, ms)
+    
+    #calculate IIR filter parameters
+    IIRparams = filter_finder(upperQ, fs/decim, .3, 50)
+    
+    #filter the signals
+    nyq = IIRparams[0]
+    passFreq = IIRparams[1]
+    stopFreq = IIRparams[2]
+    passdB = IIRparams[3]
+    stopdB = IIRparams[4]
+    b0, a0 = iirdesign(passFreq/nyq, stopFreq/nyq, passdB, stopdB)
+    w, h = freqz(b0, a0, worN=3000000)
+    Qf = lfilter(b0, a0, upperQ)
+    If = lfilter(b0, a0, upperI)
+    
+    #phase reconstructed amplitude
+    #phase, phasehyp = phase_reconstruction(Qf, If, fs, fo, ms)
+    
+    #hypotenuse reconstructed amplitude
+    hyp = 4*np.hypot(Qf, If)
+    
+    #determine the number of samples taken per pulse
+    valsPerBin = int(fs*int_time/decim)
+    
+    avgHyp = []
+    
+    #calculate averages
+    nwindows = int(np.floor(len(hyp)/valsPerBin))
+    
+    for i in range(0, nwindows) :
+        
+        #update avgPhase & avgHyp
+        avgHyp.append(np.mean(hyp[i*valsPerBin:(i+1)*valsPerBin]))
+    
+    #convert avg lists to arrays for simpler computation later
+    avgHyp = np.array(avgHyp)
+    
+    return hyp, avgHyp
+
+def DDC_resolution(ampListA, ampListB, hist=True, scatter=True, title=""):
+    """
+    Calculates the amplitude asymmetry resolution from a list of bin averaged amplitudees.
+    
+    Inputs:
+    ampListA: list of successive bin averaged amplitudes for channel A
+    ampListB: list of successive bin averaged amplitudes for channel B
+    hist: tells DDC_resolution whether or not to plot a resolution histogram
+    scatter: tells DDC_resolution whether or not to plot a resolution scatter plot
+    title: title for any plots produced
+    
+    Outputs:
+    sigma: standard deviation in amplitude asymmetry difference
+    mu: average amplitude asymmetry difference
+    diffs: list of successive amplitude asymmetry diffs
+    """
+    
+    #lists to store Channel A & B amplitude pairs
+    Apairs = []
+    Bpairs = []
+
+    #populate Apairs & Bpairs with bin averaged RMS amplitudes
+    for i in range(0, len(ampListA)-1, 2) :
+
+        #start with A
+        a1 = ampListA[i]
+        a2 = ampListA[i+1]
+        Apairs.append([a1, a2])
+
+        #same process for B
+        b1 = ampListB[i]
+        b2 = ampListB[i+1]
+        Bpairs.append([b1, b2])
+
+    #convert lists to arrays to make calculations easier
+    Apairs = np.array(Apairs)
+    Bpairs = np.array(Bpairs)
+
+    #calculate relative differences within channels
+    Adiffs = (Apairs[:,0] - Apairs[:,1])/(Apairs[:,0] + Apairs[:,1])
+    Bdiffs = (Bpairs[:,0] - Bpairs[:,1])/(Bpairs[:,0] + Bpairs[:,1])
+    
+    #calculate differences between channels
+    diffs = Adiffs - Bdiffs
+
+    #stat params
+    sigma = np.std(diffs)
+    mu = np.mean(diffs)
+    
+    #histogram plot the difference in amplitude asymmetry differences between channels
+    if hist :
+        f1, a1 = plt.subplots(1,1)
+        y,x,_ = a1.hist(diffs*1e6, range = (-int(3*sigma*1e6), int(3*sigma*1e6)), bins=20)
+        a1.set_xlabel('Amplitude Asymmetry Difference (PPM)')
+        a1.text(-int(2.5*sigma*1e6), y.max(), s='Sigma={0:.3f} PPM'.format(sigma*1e6))
+        a1.set_title(title)
+        f1.show()
+    
+    #scatter plot
+    if scatter :
+        f2, a2 = plt.subplots(1,1)
+        a2.scatter(Adiffs*1e6, Bdiffs*1e6)
+        a2.set_xlabel('Channel A asymmetry (PPM)')
+        a2.set_ylabel('Channel B asymmetry (PPM)')
+        a2.set_title(title)
+        f1.show()
+
+    return sigma, mu, diffs
+
+def filter_finder(signal, fs, passdB, stopdB):
+    """
+    Recieves a signal with two frequency peaks and finds IIR filter parameters that will
+    filter out the higher frequency peak.
+    
+    Inputs:
+    signal: the signal to find filter parameters for
+    fs: sampling frequency of the signal
+    passdB: maximum loss for the pass band
+    stopdB: minimum loss for the stop band
+    
+    Outputs:
+    IIRparams: parameters for an IIR filter, formated as IIRparams = [nyquist freq, pass freq, stop frequency, passdb, stopdb]
+    """
+    
+    #frequency spectrum
+    freqs, spectrum = periodogram(signal, fs=fs)
+    
+    #find the indices of peaks
+    peaks, info = find_peaks(spectrum, height = .0000001)
+    
+    #find the peak frequencies
+    peakFreqs = freqs[peaks[0]], freqs[peaks[1]]
+    
+    IIRparams = [np.max(freqs), peakFreqs[0], peakFreqs[1], passdB, stopdB]
+    
+    return IIRparams
     
