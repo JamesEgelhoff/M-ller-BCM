@@ -2,8 +2,9 @@
 import numpy as np
 from scipy.fftpack import fft, rfft, fftshift
 from scipy.integrate import trapz
-from scipy.signal import medfilt, butter, bessel, firwin, lfilter, freqz, decimate, periodogram, welch, iirdesign, get_window, firls, find_peaks
+from scipy.signal import medfilt, butter, bessel, firwin, firwin2, lfilter, freqz, decimate, periodogram, welch, iirdesign, get_window, firls, find_peaks
 from scipy.stats import norm
+import cmath
 
 # plotting
 import matplotlib.pyplot as plt
@@ -114,7 +115,6 @@ def read_binary(infile, outfile, bits=12, fsr=1.35, send='mid', dtype=np.int16, 
 def open_binary(infile, nchannels=2) :
     data = np.load(infile)
     return data
-
 
 def make_data(outfile, A, fo, fs, jitter_fs, int_time, n_window) :
     ''' create phase noise corrupted signal with appropriate length 
@@ -1068,6 +1068,7 @@ def downmix(signal, fs, ms, single=None, offset=0) :
     ms: mixer frequency
     fixAmp: if true, returned values of I and Q are doubled to account for halving of amplitude during downmixing
     single: instead of downmixing to Q and I, can just dowmix to Q or I. If single=Q mix to Q only, if single=I mix to I only
+        if single= "complex" returns single, complex downmixed stream
     offset: phase offset
     
     Outputs:
@@ -1084,26 +1085,32 @@ def downmix(signal, fs, ms, single=None, offset=0) :
     if single=="I":
         
         #calculate & return I
-        mixI = np.sin(time*ms+offset)
-        return mixI
+        mixI = np.cos(time*ms+offset)
+        return signal*mixI
     
     elif single=="Q":
         
         #calculate & return Q
-        mixQ = np.cos(time*ms+offset)
-        return mixQ
+        mixQ = np.sin(time*ms+offset)
+        return signal*mixQ
     
+    elif single == "complex" :
+        
+        #calculate complex mixer signal, mix & return mixed signal
+        mix = np.exp(1j*ms*time)
+        return signal * mix
+        
     else:
         
         #mixer signals
-        mixQ = np.cos(time*ms+offset)
-        mixI = np.sin(time*ms+offset)
+        mixQ = np.sin(time*ms+offset)
+        mixI = np.cos(time*ms+offset)
         
         #calculate I & Q
         I = signal * mixI
         Q = signal * mixQ
         
-        return Q, I
+        return I, Q
 
 def single_sideband(signal, fs, ms, dual=False) :
     """
@@ -1111,7 +1118,7 @@ def single_sideband(signal, fs, ms, dual=False) :
     
     Inputs:
     signal: input signal data.
-        If inputing a downmixed dual stream format as signal=[Q,I] and set dual=True
+        If inputing a downmixed dual stream format as signal=[I, Q] and set dual=True
     fs: downmixed signal sampling frequency
     ms: mixer frequency
     decim: downconversion factor
@@ -1122,18 +1129,18 @@ def single_sideband(signal, fs, ms, dual=False) :
     """
     
     if dual:
-        Q = signal[0]
-        I = signal[1]
+        I = signal[0]
+        Q = signal[1]
         
     else:
-        Q, I = downmix(signal, fs, ms)
+        I, Q = downmix(signal, fs, ms)
         
-    IQ, II = downmix(I, fs, ms)
-    QQ, QI = downmix(Q, fs, ms)
+    II, IQ = downmix(I, fs, ms)
+    QI, QQ = downmix(Q, fs, ms)
     
     #produce original downmixed signal and its Hilbert transform
-    s = II+QQ
-    shilb = IQ-QI
+    s = II-QQ
+    shilb = -(IQ+QI)
     
     #modulation
     Scos, Ssin = downmix(s, fs, ms)
@@ -1145,7 +1152,7 @@ def single_sideband(signal, fs, ms, dual=False) :
     
     return Hssb, Lssb
 
-def FFT_plot(signalList, fs, int_time, scale='symlog', labels=False, returnFigAx=False) :
+def FFT_plot(signalList, fs, int_time, scale='log', labels=False, returnFigAx=False, color=None) :
     """
     Plots the complex FFT of a array of signals
     
@@ -1196,9 +1203,16 @@ def FFT_plot(signalList, fs, int_time, scale='symlog', labels=False, returnFigAx
         Sj = Sj/n_window/binwidth
         Sj = Sj**2 # convert to power spectrum
         if labels!= False:
-            ax.step(fbins, 10*np.log10(Sj/np.max(Sj)), label=labels[j])
+            if color==None:
+                ax.step(fbins, 10*np.log10(Sj/np.max(Sj)), label=labels[j])
+            else:
+                ax.step(fbins, 10*np.log10(Sj/np.max(Sj)), label=labels[j], color=color)
+            
         else:
-            ax.step(fbins, 10*np.log10(Sj/np.max(Sj)))
+            if color==None:
+                ax.step(fbins, 10*np.log10(Sj/np.max(Sj)))
+            else:
+                ax.step(fbins, 10*np.log10(Sj/np.max(Sj)), color=color)
         
     ax.set_xscale(scale)
     ax.set_xlabel('Frequency (Hertz)')
@@ -1227,7 +1241,7 @@ def decimate(signal, decim):
     
     return downsamp
 
-def phase_reconstruction(Q, I, fs, fo, ms):
+def phase_reconstruction(I, Q, fs, fo, ms):
     """
     Performs quadrature phase reconstruction on a downmixed & filtered signal
     
@@ -1242,92 +1256,158 @@ def phase_reconstruction(Q, I, fs, fo, ms):
     amps: array of amplitude at each point
     """
     
-    #calculate deltaW
-    deltaW = np.abs(fo-ms)
+    #caculate deltaW numerically
+    deltaW = get_tone(Q, fs)
+    #print('Tone of Qf is {:e}'.format(deltaW))
     
     #mix to quadrature
-    QQ, QI = downmix(Q, fs, deltaW)
-    IQ, II = downmix(I, fs, deltaW)
+    QI, QQ = downmix(Q, fs, deltaW)
+    II, IQ = downmix(I, fs, deltaW)
     
     #convert data into real and complex components
-    cosAve = (QQ-II)
-    sinAve = (-QI-IQ)
+    cosAve = 2*(II-QQ)
+    sinAve = 2*(-QI-IQ)
     
     offset = np.arctan2(sinAve, cosAve)
+    #deltaW = get_tone(cosAve, fs)
+    #print('Tone of cosAve is {:e}'.format(deltaW))
     
     #phase rotate and calculate amps
-    cos2 = downmix(cosAve, fs, 0, single="Q", offset=0)
-    sin2 = downmix(sinAve, fs, 0, single="I", offset=0)
+    cos2 = downmix(cosAve, fs, deltaW, single="Q")
+    sin2 = downmix(sinAve, fs, deltaW, single="I")
     
     amps = cos2 + sin2
     
     hyp = np.hypot(cosAve, sinAve)
     
-    return amps, hyp
+    return amps, hyp, QQ, QI, IQ, II, deltaW
     
-def DDC2(signal, fs, fo, ms, decim, int_time):
+def DDC_ADC(signal, fs, ms, decim, int_time, output="real", diagnostics=False):
     
     """
-    Rewritten, simplified DDC algorithm.
+    Rewritten, simplified DDC algorithm. Designed to closely approximate ADC EVM
+    DDC settings.
     
     Inputs:
     signal: signal to be DDCed
     fs: signal freqency
     ms: mixer frequency
     decim: how much to downsample the signal
+    output: if "real" return real I and Q. if "complex", return complex data
+    avgArray: if True, return averaged amplitude data over int_time length windows
+    diagnostics: if true plot FFTs of signal at various stages of downconversion
     
     Outputs:
+    data: if real, [I, Q]. if complex return a single data stream
     phase: phase reconstructed amplitude signal
     avgPhase: phase reconstructed averaged amplitudes
-    hyp: hypotenuse reconstructed amplitude signal
-    avgHyp: hypotenuse reconstructed averaged amplitudes
     """
-    #downmix & downsample the signal
-    Q, I = downmix(signal, fs, ms)
-    Q = decimate(Q, decim)
-    I = decimate(I, decim)
     
-    #take the upper sidebands
-    upperQ, lowerQ = single_sideband(Q, fs, ms)
-    upperI, lowerI = single_sideband(I, fs, ms)
+    if diagnostics:
+        FFT_plot([signal], fs, int_time, labels=["raw signal before DDC"])
+        
+    #downmix signal
+    comp = downmix(signal, fs, ms, single="complex")
     
-    #calculate IIR filter parameters
-    IIRparams = filter_finder(upperQ, fs/decim, .3, 50)
+    if diagnostics:
+        FFT_plot([comp.real], fs, int_time, labels=["I signal after mixing"], color='g')
     
-    #filter the signals
-    nyq = IIRparams[0]
-    passFreq = IIRparams[1]
-    stopFreq = IIRparams[2]
-    passdB = IIRparams[3]
-    stopdB = IIRparams[4]
-    b0, a0 = iirdesign(passFreq/nyq, stopFreq/nyq, passdB, stopdB)
-    w, h = freqz(b0, a0, worN=3000000)
-    Qf = lfilter(b0, a0, upperQ)
-    If = lfilter(b0, a0, upperI)
+    #decimation factor for first decimation step
+    decim1 = decim/2
     
-    #phase reconstructed amplitude
-    #phase, phasehyp = phase_reconstruction(Qf, If, fs, fo, ms)
+    #define filter parameters
+    ntaps=64
+    nyq=fs/2
+    a=1
+    b = firwin(ntaps, ms, nyq=nyq)
     
-    #hypotenuse reconstructed amplitude
-    hyp = 4*np.hypot(Qf, If)
+    #filter then decimate the signal
+    comp = lfilter(b, a, comp)
+    if diagnostics:
+        FFT_plot([comp.real], fs, int_time, labels=["I signal after first LP filter"], color='m')
+        
+    comp = decimate(comp, decim1)
+    if diagnostics:
+        FFT_plot([comp.real], fs/decim1, int_time, labels=["I signal after decimation"], color='y')
     
-    #determine the number of samples taken per pulse
-    valsPerBin = int(fs*int_time/decim)
+    #decimation filter
+    #passdB = .3 #maximum signal loss in pass band
+    stopdB = 90 #minimum signal reduction in stop band
+    passFrac = .8 #fraction of downsampled nyquist zone that is is in pass band
+    nyq = fs/2# (2*decim1) #width of Nyquist zone before downsampling
+    cutoff = passFrac * fs  / (decim) #boundary of pass band
+    transWidth = 2 * (1-passFrac) * fs  / (decim) #width of transition band
     
-    avgHyp = []
+    a1 = 1
+    b1 = firwin(ntaps, nyq-cutoff, width=transWidth, window=('chebwin', stopdB), nyq=nyq*decim1)
+    
+    comp = lfilter(b1, a1, comp)
+    if diagnostics:
+        w, h = freqz(b1, a1, worN=3000000)
+        fig, ax = plt.subplots(1,1)
+        ax.plot(0.5*fs*w/(np.pi*fs/2), 10*np.log10(np.abs(h)**2))
+        ax.set_xlabel("Frequency in units of fs/2")
+        ax.set_ylabel("Response (dB)")
+        ax.axvline(x=cutoff/nyq, label="Pass band cutoff", color='g')
+        ax.axvline(x=(cutoff+transWidth)/nyq, label="Transition band cutoff", color='r')
+        ax.axhline(y=-stopdB, label="Ideal supression in stop band", color='y')
+        ax.set_title("Simulated LP filter response")
+        ax.legend()
+        fig.show()
+        
+        FFT_plot([comp.real], fs/decim1, int_time, labels=["I signal after decimation LP filter"], color='c')
+    
+    if output=="real":
+        I = comp.real
+        Q = 1j*comp.imag
+        for i in range(0,4):
+            I[i::4] = I[i::4]*(1j)**i
+            Q[i::4] = Q[i::4]*(1j)**i
+        I = I.real
+        Q = Q.real
+        if diagnostics:
+            FFT_plot([I], fs/decim1, int_time, labels=["I signal after real conversion"], color='r')
+        return I, Q, amplitude_avgs(comp, fs/decim, int_time)
+        
+    if output=="complex":
+        #output DDCed data & averaged resolutions
+        comp = decimate(comp, 2)
+        if diagnostics:
+            FFT_plot([comp.real], fs/decim1, int_time, labels=["after second decimation"], color='r')
+        I = comp.real
+        Q = comp.imag
+        return I, Q, amplitude_avgs(comp, fs/decim, int_time)
+        
+def amplitude_avgs(signal, fs, int_time):
+    """
+    Calculates bin averaged amplitudes for a complex signal with hypotenuse reconstruction
+    
+    Inputs:
+    signal: compleex valued signal
+    fs: sampling frequency
+    int_time: window length to average over
+    
+    Outputs:
+    avgs: average amplitude over each window
+    """
+    
+    #figure out number of samples per window
+    nsamps = int(fs * int_time)
+    
+    #determine number of windows to average over
+    nwindows = int(np.floor(len(signal)/nsamps))
+    
+    #empty array to populate with averages
+    avgs=[]
     
     #calculate averages
-    nwindows = int(np.floor(len(hyp)/valsPerBin))
+    for i in range(0, nwindows):
+        window = signal[i:i+nsamps]
+        hyps = np.hypot(window.real, window.imag)
+        avg = np.mean(hyps)
+        avgs.append(avg)
     
-    for i in range(0, nwindows) :
-        
-        #update avgPhase & avgHyp
-        avgHyp.append(np.mean(hyp[i*valsPerBin:(i+1)*valsPerBin]))
-    
-    #convert avg lists to arrays for simpler computation later
-    avgHyp = np.array(avgHyp)
-    
-    return hyp, avgHyp
+    return np.array(avgs)
 
 def DDC_resolution(ampListA, ampListB, hist=True, scatter=True, title=""):
     """
@@ -1400,7 +1480,7 @@ def DDC_resolution(ampListA, ampListB, hist=True, scatter=True, title=""):
 
 def filter_finder(signal, fs, passdB, stopdB):
     """
-    Recieves a signal with two frequency peaks and finds IIR filter parameters that will
+    Recieves a signal with two frequency peaks and finds filter parameters that will
     filter out the higher frequency peak.
     
     Inputs:
@@ -1422,7 +1502,29 @@ def filter_finder(signal, fs, passdB, stopdB):
     #find the peak frequencies
     peakFreqs = freqs[peaks[0]], freqs[peaks[1]]
     
-    IIRparams = [np.max(freqs), peakFreqs[0], peakFreqs[1], passdB, stopdB]
+    params = [np.max(freqs), peakFreqs[0], peakFreqs[1], passdB, stopdB]
     
-    return IIRparams
+    return params
+
+def get_tone(signal, fs, res=False):
+    """
+    Returns the value of the largest frequency peak in a signal
     
+    Inputs:
+    signal: signal to be analyzed
+    fs: sampling frequency of signal
+    res: if True, return frequency resolution
+    
+    Outputs:
+    tone: frequency the highest amplitude in the signal
+    """
+    
+    #caculate the max frequency
+    freqs, spectrum = periodogram(signal, fs=fs)
+    peakInd = np.argmax(spectrum)
+    tone = freqs[peakInd]
+    
+    if res:
+        return tone, freqs[1]-freqs[0]
+    else:
+        return tone
