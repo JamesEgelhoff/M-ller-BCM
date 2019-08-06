@@ -4,6 +4,8 @@ from scipy.fftpack import fft, rfft, fftshift
 from scipy.integrate import trapz
 from scipy.signal import medfilt, butter, bessel, firwin, firwin2, lfilter, freqz, decimate, periodogram, welch, iirdesign, get_window, firls, find_peaks
 from scipy.stats import norm
+from scipy.optimize import curve_fit
+import matplotlib
 import cmath
 
 # plotting
@@ -842,7 +844,7 @@ def calibrate(A, B, fsr=1.35, bits=12, ax1=None, ax2=None) :
     input('press enter to finish calibration')
     return val, bins, slope, offset
     
-def amplitude_asym_hist(ChA, ChB, fs=3e9, ncalc="auto", pulse_width=5e-4, hist=True, scatter=False, title="", suppress=False):
+def amplitude_asym_hist(ChA, ChB, fs=3e9, ncalc="auto", pulse_width=5e-4, hist=True, scatter=False, title="", suppress=False, ppm_plot=False, diffs_plot=False):
     
     
     ''' 
@@ -904,9 +906,22 @@ def amplitude_asym_hist(ChA, ChB, fs=3e9, ncalc="auto", pulse_width=5e-4, hist=T
     Adiffs = (Apairs[:,0] - Apairs[:,1])/(Apairs[:,0] + Apairs[:,1])
     Bdiffs = (Bpairs[:,0] - Bpairs[:,1])/(Bpairs[:,0] + Bpairs[:,1])
     
+    if ppm_plot:
+        fppm, appm = plt.subplots(1,1)
+        appm.plot(Adiffs*1e6, label="channel A asymmetries")
+        appm.plot(Bdiffs*1e6, label="channel B asymmetries")
+        appm.set_title(title)
+        fppm.show()
+    
     #calculate differences between channels
     diffs = Adiffs - Bdiffs
-
+    
+    if diffs_plot:
+        fppm, appm = plt.subplots(1,1)
+        appm.plot(diffs*1e6, label="diffs")
+        appm.set_title(title)
+        fppm.show()
+    
     #stat params
     sigma = np.std(diffs)
     mu = np.mean(diffs)
@@ -1085,26 +1100,26 @@ def downmix(signal, fs, ms, single=None, offset=0) :
     if single=="I":
         
         #calculate & return I
-        mixI = np.cos(time*ms+offset)
+        mixI = np.cos(2*np.pi*time*ms+offset)
         return signal*mixI
     
     elif single=="Q":
         
         #calculate & return Q
-        mixQ = np.sin(time*ms+offset)
+        mixQ = np.sin(2*np.pi*time*ms+offset)
         return signal*mixQ
     
     elif single == "complex" :
         
         #calculate complex mixer signal, mix & return mixed signal
-        mix = np.exp(1j*ms*time)
+        mix = np.exp(1j*2*np.pi*ms*time)
         return signal * mix
         
     else:
         
         #mixer signals
-        mixQ = np.sin(time*ms+offset)
-        mixI = np.cos(time*ms+offset)
+        mixQ = np.sin(2*np.pi*time*ms+offset)
+        mixI = np.cos(2*np.pi*time*ms+offset)
         
         #calculate I & Q
         I = signal * mixI
@@ -1152,7 +1167,7 @@ def single_sideband(signal, fs, ms, dual=False) :
     
     return Hssb, Lssb
 
-def FFT_plot(signalList, fs, int_time, scale='log', labels=False, returnFigAx=False, color=None) :
+def FFT_plot(signalList, fs, int_time, scale='log', labels=False, returnFigAx=False) :
     """
     Plots the complex FFT of a array of signals
     
@@ -1203,20 +1218,14 @@ def FFT_plot(signalList, fs, int_time, scale='log', labels=False, returnFigAx=Fa
         Sj = Sj/n_window/binwidth
         Sj = Sj**2 # convert to power spectrum
         if labels!= False:
-            if color==None:
-                ax.step(fbins, 10*np.log10(Sj/np.max(Sj)), label=labels[j])
-            else:
-                ax.step(fbins, 10*np.log10(Sj/np.max(Sj)), label=labels[j], color=color)
+            ax.step(fbins, 10*np.log10(Sj/np.max(Sj)), label=labels[j])
             
         else:
-            if color==None:
-                ax.step(fbins, 10*np.log10(Sj/np.max(Sj)))
-            else:
-                ax.step(fbins, 10*np.log10(Sj/np.max(Sj)), color=color)
+            ax.step(fbins, 10*np.log10(Sj/np.max(Sj)))
         
     ax.set_xscale(scale)
     ax.set_xlabel('Frequency (Hertz)')
-    ax.set_ylabel(r'$\frac{dBc}{Hz}$', rotation=0, fontsize=16)
+    ax.set_ylabel(r'$\frac{dBm}{Hz}$', rotation=0, fontsize=16)
     if labels!=False:
         ax.legend(loc=2)
     
@@ -1241,48 +1250,50 @@ def decimate(signal, decim):
     
     return downsamp
 
-def phase_reconstruction(I, Q, fs, fo, ms):
-    """
-    Performs quadrature phase reconstruction on a downmixed & filtered signal
+# =============================================================================
+# def phase_reconstruction(I, Q, fs, fo, ms):
+#     """
+#     Performs quadrature phase reconstruction on a downmixed & filtered signal
+#     
+#     Inputs:
+#     Q: cos modulated signal
+#     I: sin modulated signal
+#     fs: sample frequency
+#     fo: signal frequency
+#     ms: mixer frequency
+#     
+#     Outputs:
+#     amps: array of amplitude at each point
+#     """
+#     
+#     #caculate deltaW numerically
+#     deltaW = get_tone(Q, fs)
+#     #print('Tone of Qf is {:e}'.format(deltaW))
+#     
+#     #mix to quadrature
+#     QI, QQ = downmix(Q, fs, deltaW)
+#     II, IQ = downmix(I, fs, deltaW)
+#     
+#     #convert data into real and complex components
+#     cosAve = 2*(II-QQ)
+#     sinAve = 2*(-QI-IQ)
+#     
+#     offset = np.arctan2(sinAve, cosAve)
+#     #deltaW = get_tone(cosAve, fs)
+#     #print('Tone of cosAve is {:e}'.format(deltaW))
+#     
+#     #phase rotate and calculate amps
+#     cos2 = downmix(cosAve, fs, deltaW, single="Q")
+#     sin2 = downmix(sinAve, fs, deltaW, single="I")
+#     
+#     amps = cos2 + sin2
+#     
+#     hyp = np.hypot(cosAve, sinAve)
+#     
+#     return amps, hyp, QQ, QI, IQ, II, deltaW
+# =============================================================================
     
-    Inputs:
-    Q: cos modulated signal
-    I: sin modulated signal
-    fs: sample frequency
-    fo: signal frequency
-    ms: mixer frequency
-    
-    Outputs:
-    amps: array of amplitude at each point
-    """
-    
-    #caculate deltaW numerically
-    deltaW = get_tone(Q, fs)
-    #print('Tone of Qf is {:e}'.format(deltaW))
-    
-    #mix to quadrature
-    QI, QQ = downmix(Q, fs, deltaW)
-    II, IQ = downmix(I, fs, deltaW)
-    
-    #convert data into real and complex components
-    cosAve = 2*(II-QQ)
-    sinAve = 2*(-QI-IQ)
-    
-    offset = np.arctan2(sinAve, cosAve)
-    #deltaW = get_tone(cosAve, fs)
-    #print('Tone of cosAve is {:e}'.format(deltaW))
-    
-    #phase rotate and calculate amps
-    cos2 = downmix(cosAve, fs, deltaW, single="Q")
-    sin2 = downmix(sinAve, fs, deltaW, single="I")
-    
-    amps = cos2 + sin2
-    
-    hyp = np.hypot(cosAve, sinAve)
-    
-    return amps, hyp, QQ, QI, IQ, II, deltaW
-    
-def DDC_ADC(signal, fs, ms, decim, int_time, output="real", diagnostics=False):
+def DDC_ADC(signal, fs, ms, decim, int_time, output="real", diagnostics=False, finalFilt=False):
     
     """
     Rewritten, simplified DDC algorithm. Designed to closely approximate ADC EVM
@@ -1290,7 +1301,7 @@ def DDC_ADC(signal, fs, ms, decim, int_time, output="real", diagnostics=False):
     
     Inputs:
     signal: signal to be DDCed
-    fs: signal freqency
+    fs: sampling freqency
     ms: mixer frequency
     decim: how much to downsample the signal
     output: if "real" return real I and Q. if "complex", return complex data
@@ -1306,56 +1317,66 @@ def DDC_ADC(signal, fs, ms, decim, int_time, output="real", diagnostics=False):
     if diagnostics:
         FFT_plot([signal], fs, int_time, labels=["raw signal before DDC"])
         
-    #downmix signal
-    comp = downmix(signal, fs, ms, single="complex")
-    
-    if diagnostics:
-        FFT_plot([comp.real], fs, int_time, labels=["I signal after mixing"], color='g')
+    comp=signal
     
     #decimation factor for first decimation step
     decim1 = decim/2
     
-    #define filter parameters
-    ntaps=64
-    nyq=fs/2
-    a=1
-    b = firwin(ntaps, ms, nyq=nyq)
-    
-    #filter then decimate the signal
-    comp = lfilter(b, a, comp)
-    if diagnostics:
-        FFT_plot([comp.real], fs, int_time, labels=["I signal after first LP filter"], color='m')
-        
-    comp = decimate(comp, decim1)
-    if diagnostics:
-        FFT_plot([comp.real], fs/decim1, int_time, labels=["I signal after decimation"], color='y')
-    
     #decimation filter
     #passdB = .3 #maximum signal loss in pass band
+    ntaps=128
     stopdB = 90 #minimum signal reduction in stop band
     passFrac = .8 #fraction of downsampled nyquist zone that is is in pass band
-    nyq = fs/2# (2*decim1) #width of Nyquist zone before downsampling
-    cutoff = passFrac * fs  / (decim) #boundary of pass band
-    transWidth = 2 * (1-passFrac) * fs  / (decim) #width of transition band
+    dnyq = fs / (2*decim1) #width of Nyquist zone after downsampling
+    #cutoffs = [ms - passFrac * dnyq, ms + passFrac*dnyq] #boundary of pass band
+    passf = 1497e6 - 1480e6
+    cutoffs = [passf, passf+6e6]
+    transWidth = (1-passFrac) * dnyq #width of transition band
     
     a1 = 1
-    b1 = firwin(ntaps, nyq-cutoff, width=transWidth, window=('chebwin', stopdB), nyq=nyq*decim1)
-    
-    comp = lfilter(b1, a1, comp)
+    b1 = firwin(ntaps, cutoffs, width=transWidth, window=('chebwin', stopdB), pass_zero=False, nyq=fs/2)
     if diagnostics:
         w, h = freqz(b1, a1, worN=3000000)
-        fig, ax = plt.subplots(1,1)
-        ax.plot(0.5*fs*w/(np.pi*fs/2), 10*np.log10(np.abs(h)**2))
-        ax.set_xlabel("Frequency in units of fs/2")
-        ax.set_ylabel("Response (dB)")
-        ax.axvline(x=cutoff/nyq, label="Pass band cutoff", color='g')
-        ax.axvline(x=(cutoff+transWidth)/nyq, label="Transition band cutoff", color='r')
+        compf = lfilter(b1, a1, comp)
+        print(compf[0:5])
+        fig, ax = FFT_plot([comp.real, compf.real], fs, int_time, labels=["I signal after mixing", "I signal after filtering"], returnFigAx=True)
+        ax.plot(0.5*fs*w/(np.pi), 10*np.log10(np.abs(h)**2))
+        ax.axvline(x=ms - passFrac * dnyq, label="Pass band cutoff", color='g')
+        ax.axvline(x=ms + passFrac * dnyq, color='g')
+        ax.axvline(x=ms - passFrac * dnyq - transWidth, label="Stop band cutoff", color='r')
+        ax.axvline(x=ms + passFrac * dnyq + transWidth, color='r')
+        ax.axvline(x=ms, label="mixer frequency", color="m")
         ax.axhline(y=-stopdB, label="Ideal supression in stop band", color='y')
         ax.set_title("Simulated LP filter response")
         ax.legend()
         fig.show()
         
-        FFT_plot([comp.real], fs/decim1, int_time, labels=["I signal after decimation LP filter"], color='c')
+        comp=compf
+    else:
+        comp = lfilter(b1, a1, comp)
+        
+    #downmix signal
+    comp = downmix(signal, fs, ms, single="complex")
+    
+    if diagnostics:
+        FFT_plot([comp.real], fs, int_time, labels=["I signal after mixing"])
+    
+    comp = decimate(comp, decim1)
+    if diagnostics:
+        FFT_plot([comp.real], fs/decim1, int_time, labels=["I signal after decimation"])
+    
+    #define filter parameters for final filter
+    nyq=fs/2
+    a=1
+    b = firwin(ntaps-1, 2e7, width=1e7, nyq=nyq/decim1, pass_zero=False)
+    comp=lfilter(b,a,comp)
+    
+    if diagnostics:
+        w, h = freqz(b, a, worN=3000000)
+        fig, ax = FFT_plot([comp.real], fs/decim1, int_time, labels=["I signal after LPF2"], returnFigAx=True)
+        ax.plot(0.5*fs*w/(np.pi*decim1), 10*np.log10(np.abs(h)**2), label="LPF2 frequency response")
+        ax.legend()
+        fig.show()
     
     if output=="real":
         I = comp.real
@@ -1365,15 +1386,20 @@ def DDC_ADC(signal, fs, ms, decim, int_time, output="real", diagnostics=False):
             Q[i::4] = Q[i::4]*(1j)**i
         I = I.real
         Q = Q.real
+        if finalFilt==True:
+            a2 = 1
+            b2 = firwin(ntaps-1, 1e8, 1e8-7e7, nyq=nyq/decim1, pass_zero=False)
+            I = lfilter(b2, a2, I)
+            Q = lfilter(b2, a2, Q)
         if diagnostics:
-            FFT_plot([I], fs/decim1, int_time, labels=["I signal after real conversion"], color='r')
+            FFT_plot([I], fs/decim1, int_time, labels=["I signal after real conversion"])
         return I, Q, amplitude_avgs(comp, fs/decim, int_time)
         
     if output=="complex":
         #output DDCed data & averaged resolutions
         comp = decimate(comp, 2)
         if diagnostics:
-            FFT_plot([comp.real], fs/decim1, int_time, labels=["after second decimation"], color='r')
+            FFT_plot([comp.real], fs/decim1, int_time, labels=["after second decimation"])
         I = comp.real
         Q = comp.imag
         return I, Q, amplitude_avgs(comp, fs/decim, int_time)
@@ -1383,7 +1409,7 @@ def amplitude_avgs(signal, fs, int_time):
     Calculates bin averaged amplitudes for a complex signal with hypotenuse reconstruction
     
     Inputs:
-    signal: compleex valued signal
+    signal: complex valued signal
     fs: sampling frequency
     int_time: window length to average over
     
@@ -1409,7 +1435,7 @@ def amplitude_avgs(signal, fs, int_time):
     
     return np.array(avgs)
 
-def DDC_resolution(ampListA, ampListB, hist=True, scatter=True, title=""):
+def DDC_resolution(ampListA, ampListB, hist=True, scatter=True, title="", xlabel='Channel A asymmetry (PPM)', ylabel='Channel B asymmetry (PPM)'):
     """
     Calculates the amplitude asymmetry resolution from a list of bin averaged amplitudees.
     
@@ -1470,7 +1496,7 @@ def DDC_resolution(ampListA, ampListB, hist=True, scatter=True, title=""):
     #scatter plot
     if scatter :
         f2, a2 = plt.subplots(1,1)
-        a2.scatter(Adiffs*1e6, Bdiffs*1e6)
+        a2.scatter(Adiffs*1e6, Bdiffs*1e6, marker='.')
         a2.set_xlabel('Channel A asymmetry (PPM)')
         a2.set_ylabel('Channel B asymmetry (PPM)')
         a2.set_title(title)
@@ -1528,3 +1554,470 @@ def get_tone(signal, fs, res=False):
         return tone, freqs[1]-freqs[0]
     else:
         return tone
+
+def binToTxt(binPath, txtPath, bits, decimate) :
+    """
+    Takes a .bin file and converts it into MATLAB readable .txt file
+    
+    Inputs:
+    binPath: location on disk of .bin file
+    txtPath: location to save .txt file to (don't include .txt in this path)
+    bits: resolution of incoming data (12 or 14 bits)
+    decimate: if true, the .txt file that is saved will be 10x shorter than the .bin file (speeds up process to save data)
+    """
+    
+    nchannels = 2 #break data into chA and chB. Don't further deinterleave into I & Q (for now - may change this later)
+    midpoint = 2**(bits-1)
+    data = np.fromfile(binPath, dtype=np.int16, count=-1, sep="")
+    data = data-midpoint
+    out=[]
+    for i in range(nchannels) :
+        out.append(data[i::nchannels])
+    
+    if decimate:
+        out[0] = out[0][0:int(len(out[0])/10)]
+        out[1] = out[1][0:int(len(out[1])/10)]
+        
+    out = 8*np.array(out).astype(int)
+    
+    np.savetxt(txtPath+'_chA.txt', out[0], fmt = '%i', delimiter='\n')
+    np.savetxt(txtPath+'_chB.txt', out[1], fmt = '%i', delimiter='\n')
+    
+def signal_gen(fs, fo, amp, phi, offset, bits, noise, time, int_time, IQ) :
+    """
+    Returns a single frequency signal for testing DSP algorithms.
+    
+    Inputs:
+        fs: sampling frequency
+        fo: signal frequency
+        amp: mid to peak amplitude of signal in units of volts (typical ADC value is .4-.6V)
+        phi: intial phase of the signal
+        offset: phase offset between channels
+        bits: number of bits for output signal
+        noise: magnitude of random noise in signal, in dBm (magnitude of noise is relative to amplitude of signal)
+        time: length of the signal in time
+        int_time: length of integration window
+        IQ: boolean for whether or not to return I/Q components
+        
+    Outputs:
+        A, B: signal output in channels A & B. If quad=true the return format is AI, AQ, BI, BQ
+    """
+    
+    bins = np.int(np.floor(fs * time)) #number of bins for the length of the signal
+    ratio = fo / fs #cycles per bin
+    count = np.linspace(0,bins-1,bins) #array to store bin number values
+    fftNum = int(fs)
+    fsr = 1.35 #full scale range of ADC input channels in volts
+    
+    if IQ: #if quad=true return quadrature components of signal
+        
+        #AI = np.floor(amp*2**(bits-1)*np.sin(2*np.pi*ratio*count + phi) + 2**(bits-1)*scale*np.random.rand(bins))
+        #AQ = np.floor(amp*2**(bits-1)*np.cos(2*np.pi*ratio*count + phi) + 2**(bits-1)*scale*np.random.rand(bins))
+        #BI = np.floor(amp*2**(bits-1)*np.sin(2*np.pi*ratio*count + phi + offset) + 2**(bits-1)*scale*np.random.rand(bins))
+        #BQ = np.floor(amp*2**(bits-1)*np.cos(2*np.pi*ratio*count + phi + offset) + 2**(bits-1)*scale*np.random.rand(bins))
+        
+        #generate the raw signal
+        AIsig = amp*2**(bits-1)*np.sin(2*np.pi*ratio*count + phi) / fsr
+        AQsig = amp*2**(bits-1)*np.cos(2*np.pi*ratio*count + phi)/fsr
+        BIsig = amp*2**(bits-1)*np.sin(2*np.pi*ratio*count + phi + offset)/fsr
+        BQsig = amp*2**(bits-1)*np.cos(2*np.pi*ratio*count + phi + offset)/fsr
+        
+        #calculate white noise parameters
+        sigWatts = np.mean(AIsig**2)
+        sigdB = 10 * np.log10(sigWatts)
+        noisedB = sigdB + noise
+        noiseWatts = 10**(noisedB/10)
+        
+        #scale noise amplitude to account for power density
+        adj = int_time * fs / 2
+        
+        #generate white noise
+        AInoiseAmp = np.random.normal(0, np.sqrt(adj*noiseWatts), size=bins)
+        AQnoiseAmp = np.random.normal(0, np.sqrt(adj*noiseWatts), size=bins)
+        BInoiseAmp = np.random.normal(0, np.sqrt(adj*noiseWatts), size=bins)
+        BQnoiseAmp = np.random.normal(0, np.sqrt(adj*noiseWatts), size=bins)
+        
+        #comine noise and signal
+        AI = np.floor(np.clip(AInoiseAmp+AIsig, -2**(bits-1), 2**(bits-1)))
+        AQ = np.floor(np.clip(AQnoiseAmp+AQsig, -2**(bits-1), 2**(bits-1)))
+        BI = np.floor(np.clip(BInoiseAmp+BIsig, -2**(bits-1), 2**(bits-1)))
+        BQ = np.floor(np.clip(BQnoiseAmp+BQsig, -2**(bits-1), 2**(bits-1)))
+        
+        return AI, AQ, BI, BQ
+    
+    else : #just return the real valued signals
+        
+        #A = np.floor(amp*2**(bits-1)*np.sin(2*np.pi*ratio*count + phi) + amp*2**(bits-1)*np.random.normal(0, 10**(noise/20), size=bins))
+        #B = np.floor(amp*2**(bits-1)*np.sin(2*np.pi*ratio*count + phi + offset) + amp*2**(bits-1)*np.random.normal(0, 10**(noise/20), size=bins))
+        
+        #generate the raw signal
+        Asig = amp*2**(bits-1)*np.sin(2*np.pi*ratio*count + phi)/fsr
+        Bsig = amp*2**(bits-1)*np.sin(2*np.pi*ratio*count + phi + offset)/fsr
+        
+        #calculate white noise parameters
+        sigWatts = np.mean(Asig**2)
+        sigdB = 10 * np.log10(sigWatts)
+        noisedB = sigdB + noise
+        noiseWatts = 10**(noisedB/10)
+        
+        #scale noise amplitude to account for power density
+        adj = int_time * fs / 2
+        
+        #generate white noise
+        AnoiseAmp = np.random.normal(0, np.sqrt(adj*noiseWatts), size=bins)
+        BnoiseAmp = np.random.normal(0, np.sqrt(adj*noiseWatts), size=bins)
+        
+        #comine noise and signal
+        A = np.floor(np.clip(AnoiseAmp+Asig, -2**(bits-1), 2**(bits-1)))
+        B = np.floor(np.clip(BnoiseAmp+Bsig, -2**(bits-1), 2**(bits-1)))
+        
+        return A, B
+
+def bin_avg(signal, fs, int_time):
+    """
+    Similar to amplitude_avgs, but returns the mean value across a series of bins for a given signal.
+    
+    Inputs:
+    signal: real valued signal
+    fs: sampling frequency
+    int_time: window length to average over
+    
+    Outputs:
+    avgs: average value over each window
+    """
+    
+    #figure out number of samples per window
+    nsamps = int(fs * int_time)
+    
+    #determine number of windows to average over
+    nwindows = int(np.floor(len(signal)/nsamps))
+    
+    #empty array to populate with averages
+    avgs=[]
+    
+    #calculate averages
+    for i in range(0, nwindows):
+        window = signal[i:i+nsamps]
+        hyps = np.hypot(window.real, window.imag)
+        avg = np.mean(hyps)
+        avgs.append(avg)
+    
+    return np.array(avgs)
+
+def hypot_recon(AI, AQ, BI, BQ, fs, int_time, raw):
+    """
+    Hypotenuse amplitude reconstruction
+    Inputs:
+        AI, AQ, BI, BQ: in phase and quadrature components of channel A & B signals
+        fs: sampling frequency
+        raw: if True, returns raw amplitude signal, otherwise binned amplitude averages
+    Outputs:
+        ampA, ampB: reconstructed amplitude for the signals from A&B
+    """
+    
+    #pointwise ampmlitude calculation
+    rawAmpA = np.hypot(AI, AQ)
+    rawAmpB = np.hypot(BI, BQ)
+    
+    if raw:
+        return rawAmpA, rawAmpB
+    else:
+        return bin_avg(rawAmpA, fs, int_time), bin_avg(rawAmpB, fs, int_time)
+
+def phase_rotation(AI, AQ, BI, BQ, fs, fo, int_time, raw) :
+    """
+    Phase rotation amplitude reconstruction
+    Inputs:
+        AI, AQ, BI, BQ: in phase and quadrature components of channel A & B signals
+        fs: sampling frequency
+        fo: signal frequency
+        int_time: window length
+        raw: if True, returns raw amplitude signal, otherwise binned amplitude averages
+    Outputs:
+        ampA, ampB: reconstructed amplitude for the signals from A&B
+    """
+    
+    #mix the signals down into II, QQ, QI, and IQ components
+    ratio = fo/fs
+    count = np.linspace(1, len(AI), len(AI))
+    I = np.sin(2*np.pi*ratio*count) #in phase mixer
+    Q = np.cos(2*np.pi*ratio*count) #quadrature mixer
+    AII = AI*I
+    AIQ = AI*Q
+    AQI = AQ*I
+    AQQ = AQ*Q
+    BII = BI*I
+    BIQ = BI*Q
+    BQI = BQ*I
+    BQQ = BQ*Q
+    
+    #cancel out high frequency components, hold onto zero-frequency components
+    AxPhase = AII + AQQ
+    AyPhase = AIQ - AQI
+    BxPhase = BII + BQQ
+    ByPhase = BIQ - BQI
+    
+    #calculate pointwise amplitude signals
+    rawAmpA = np.hypot(AxPhase, AyPhase)
+    rawAmpB = np.hypot(BxPhase, ByPhase)
+    
+    if raw:
+        return rawAmpA, rawAmpB
+    else:
+        #calculate and return bin averaged amplitudes
+        return bin_avg(rawAmpA, fs, int_time), bin_avg(rawAmpB, fs, int_time)
+
+def binned_phase_rotation(AI, AQ, BI, BQ, fs, int_time, raw) :
+    """
+    Phase rotation amplitude reconstruction but without foreknowledge of fo.
+    Takes FFT on each bin and uses that for amplitude reconstruction
+    
+    Inputs:
+        AI, AQ, BI, BQ: in phase and quadrature components of channel A & B signals
+        fs: sampling frequency
+    Outputs:
+        ampA, ampB: binned reconstructed amplitude for the signals from A&B
+    """
+    
+    #figure out number of samples per window
+    nsamps = int(fs * int_time)
+    
+    #determine number of windows to average over
+    nwindows = int(np.floor(len(AI)/nsamps))
+    
+    #empty arrays to populate with bin averages
+    Aavgs=[]
+    Bavgs=[]
+    Araw=[]
+    Braw=[]
+    
+    #calculate averages
+    for i in range(0, nwindows):
+        
+        #isolate the given window
+        windowAI = AI[i:i+nsamps]
+        windowAQ = AQ[i:i+nsamps]
+        windowBI = BI[i:i+nsamps]
+        windowBQ = BQ[i:i+nsamps]
+        
+        #calculate local max frequency
+        toneAI = get_tone(windowAI, fs)
+        toneAQ = get_tone(windowAQ, fs)
+        toneBI = get_tone(windowBI, fs)
+        toneBQ = get_tone(windowBQ, fs)
+        toneA = np.mean([toneAI, toneAQ])
+        toneB = np.mean([toneBI, toneBQ])
+        
+        #mix the signals down into II, QQ, QI, and IQ components
+        ratioA = toneA/fs
+        ratioB = toneB/fs
+        count = np.linspace(0, nsamps-1, nsamps)
+        
+        #create mixer signals
+        IA = np.sin(2*np.pi*ratioA*count) #in phase mixer
+        QA = np.cos(2*np.pi*ratioA*count) #quadrature mixer
+        IB = np.sin(2*np.pi*ratioB*count)
+        QB = np.cos(2*np.pi*ratioB*count)
+        
+        #mix
+        AII = windowAI*IA
+        AIQ = windowAI*QA
+        AQI = windowAQ*IA
+        AQQ = windowAQ*QA
+        BII = windowBI*IB
+        BIQ = windowBI*QB
+        BQI = windowBQ*IB
+        BQQ = windowBQ*QB
+        
+        #cancel out high frequency components, hold onto zero-frequency components
+        AxPhase = AII + AQQ
+        AyPhase = AIQ - AQI
+        BxPhase = BII + BQQ
+        ByPhase = BIQ - BQI
+        
+        #calculate pointwise amplitude signals
+        rawAmpA = np.hypot(AxPhase, AyPhase)
+        rawAmpB = np.hypot(BxPhase, ByPhase)
+        
+        #average over the bins and store
+        Araw.append(rawAmpA)
+        Braw.append(rawAmpB)
+        Aavgs.append(np.mean(rawAmpA))
+        Bavgs.append(np.mean(rawAmpB))
+    
+    #return bin amplitudes
+    if raw:
+        return Araw, Braw
+    else:
+        return Aavgs, Bavgs
+    
+# =============================================================================
+# def fourier_amp(A, B, fs) :
+#     """
+#     Determines signal amplitude from magnitude of largest peak in frequency space
+#     Inputs:
+#         A, B: Signals from channels A and B
+#     Outputs:
+#         Aamp, Bamp: continuously reconstructed amplitude for the signals from A&B
+#     """
+#     
+#     #find the max frequency
+#     Afreqs, Aspectrum = periodogram(A, fs=fs)
+#     ApeakInd = np.argmax(Aspectrum)
+#     Atone = Afreqs[ApeakInd]
+#     Aamp = np.abs(Aspectrum[ApeakInd])
+#     
+#     #find the max frequency
+#     Bfreqs, Bspectrum = periodogram(B, fs=fs)
+#     BpeakInd = np.argmax(Bspectrum)
+#     Btone = Bfreqs[BpeakInd]
+#     Bamp = np.abs(Bspectrum[BpeakInd])
+#     
+#     return Aamp, Bamp
+# =============================================================================
+
+def least_sq(sig1, sig2) :
+    """
+    Calculates and returns the least squares difference between two signals.
+    Inputs:
+        sig1/sig2 : signals to have their least squares difference returned
+    Outputs:
+        diff: the least squares diffrence
+    """
+    return np.sum(np.sqrt(np.abs(sig1-sig2)))
+
+def amplitude_correlation(signal1, signal2, title='', xlabel='',ylabel='', hist=True, scatter=False):
+    """
+    Measures the correlation between a list of amplitudes from a signal and its corresponding "truth" values
+    Inputs:
+        signal1/signal2: list of amplitudes
+        scatter: instruction for making a correlation scatterplot
+        hist: instruction for making a histogram
+        title, xlabel, ylabel: labels for scatter plot and histogram
+    Outputs:
+        sigma: standard deviation of differenceasymmetry between signals
+        asym: binwwise asymmetry between the input signals
+    """
+    
+    #make signals into arrays if they aren't already
+    signal1 = np.array(signal1)
+    signal2 = np.array(signal2)
+    
+    #calculate asymmetry and sigma
+    asym = (signal1 - signal2) / (signal1 + signal2)
+    sigma = np.std(asym)
+    mu = np.mean(asym)
+    
+    if hist :
+        
+        sigLab = matplotlib.offsetbox.AnchoredText('Sigma={0:.3f} PPM'.format(sigma*1e6), loc=2)
+        f1, a1 = plt.subplots(1,1)
+        y,x,_ = a1.hist(asym*1e6, bins=15)
+        a1.set_xlabel('Asymmetry (ppm)')
+        a1.add_artist(sigLab)
+        a1.set_title(title)
+        f1.show()
+        
+    if scatter :
+        sigLab = matplotlib.offsetbox.AnchoredText('Sigma={0:.3f} PPM'.format(sigma*1e6), loc=2)
+        f2, a2 = plt.subplots(1,1)
+        a2.scatter(signal1, signal2, marker='.')
+        a2.plot(signal1, signal2, color='none')
+        a2.relim()
+        a2.autoscale_view()
+        a2.set_xlabel(xlabel)
+        a2.set_ylabel(ylabel)
+        a2.set_title(title)
+        a2.add_artist(sigLab)
+        f2.show()
+    
+    return sigma, asym
+
+def power_fitter(xdata, ydata, plot=True, title="", dataLabel = "") :
+    """
+    Creates a log-log plot, finds and returns the best fit slope of a power law line (y = a x^b since log-log)
+    Inputs:
+        xdata: x axis info
+        ydata: y axis info
+        
+    Outputs:
+        a, b - intercept and slope of best fit power function
+    """
+    
+    #find the least squares, polynomial fit to the log of the data, rather than data itself
+    #accounts for logarithmic growth without over fitting to large number data
+    #and returns correct parameters for power law y = a x^b
+    ab = np.polyfit(np.log(xdata),np.log(ydata), 1)
+    a = np.exp(ab[1])
+    b = ab[0]
+    
+    if plot:
+        comp = matplotlib.offsetbox.AnchoredText('Best fit time complexity: O(n^{:.3f})\nBest fit power equation: y = {:.3e} x ^ {:.3f}'.format(b,a,b), loc=1)
+        fig, ax = plt.subplots(1,1)
+        ax.plot(xdata, ydata, label=dataLabel)
+        ax.plot(xdata, a*xdata**b, label="Best fit power law line")
+        ax.set_title(title)
+        ax.set_xscale('log')
+        ax.set_yscale('log')
+        ax.add_artist(comp)
+        ax.legend(loc=2)
+        fig.show()
+    
+    return a, b
+
+def exp_fitter(xdata, ydata, plot=True, title="", dataLabel = "") :
+    """
+    Creates a log-log plot, finds and returns the best fit slope of an exponential
+    Inputs:
+        xdata: x axis info
+        ydata: y axis info
+        
+    Outputs:
+        a, b - intercept and slope of best fit exponential function y=ae^(bx)
+    """
+    
+    ab = np.polyfit(xdata,np.log(ydata), 1)
+    a = np.exp(ab[1])
+    b = ab[0]
+    
+    if plot:
+        comp = matplotlib.offsetbox.AnchoredText('Best fit exponential equation: y = {:.3e} e^({:.3e} x)'.format(a,b), loc=1)
+        fig, ax = plt.subplots(1,1)
+        ax.loglog(xdata, ydata, label=dataLabel)
+        ax.loglog(xdata, a*np.e**(b*xdata), label="Best fit exponential")
+        ax.set_title(title)
+        ax.add_artist(comp)
+        ax.legend(loc=2)
+        fig.show()
+    
+    return a, b
+
+def quasiPoly_fitter(xdata, ydata, plot=True, title="", dataLabel = "") :
+    """
+    Creates a log-log plot, finds and returns the best fit slope of an quasi-polynomial growth equation
+    Inputs:
+        xdata: x axis info
+        ydata: y axis info
+        
+    Outputs:
+        a, b - best fit parameters for function y=ax^(b log(x))
+    """
+    
+    ab = np.polyfit(np.log(xdata)**2,np.log(ydata), 1)
+    a = np.exp(ab[1])
+    b = ab[0]
+    
+    if plot:
+        comp = matplotlib.offsetbox.AnchoredText('Best fit quasi-polynomial time equation: y = {:.3e} x^({:.3e} log(x))'.format(a,b), loc=1)
+        fig, ax = plt.subplots(1,1)
+        ax.plot(xdata, ydata, label=dataLabel)
+        ax.plot(xdata, a*xdata**(b*np.log(xdata)), label="Best fit quasi-polynomial line")
+        ax.set_title(title)
+        ax.set_xscale('log')
+        ax.set_yscale('log')
+        ax.add_artist(comp)
+        ax.legend(loc=2)
+        fig.show()
+    
+    return a, b
+    
