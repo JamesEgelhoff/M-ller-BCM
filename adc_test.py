@@ -1,149 +1,53 @@
+#import useful packages
 import tools as t
 import numpy as np
 import matplotlib.pyplot as plt
 import timeit
 
-# =============================================================================
-# fileraw = "E:/more ADC data/5_21_2019_1497MA_-19dB_bypass_ADC2_attenSet=000000.bin"
-# filevoltage = "E:/more ADC data/5_21_2019_1497MA_-19dB_bypass_ADC2_attenSet=000000.npy"
-# # fileavg = '../ADC_DATA/8_3/1400_3000_100_avg_amplitude.npy'
-# 
-# 
-# fs=3e9
-# fo = 1.497e9
-# foff = -38720 # 10 Hz accuracy (calculated with 100ms fft)
-# int_time = .5*1e-3
-# fsr= 1.35 # ADC32RF45 fullscale range (volts)
-# ncalc = 400
-# filter_ntaps = 32
-# npt2n = 2**29 #= 536870912, this value is around 180ms around 3GHz sampling.
-# title = ""
-# ms = 1480e6 #mixer frequency for DDC calcs
-# 
-# #DDC settings.
-# DDC = False
-# bits=12
-# band = "single"
-# decim=12
-# if DDC:
-#     bits=16
-#     dtype = np.uint16
-#     fs=fs/decim
-#     nchannels=4
-# else:
-#     dtype = np.int16
-#     nchannels=2
-# 
-# #open files
-# t.read_binary(infile=fileraw, outfile=filevoltage, bits=bits, fsr=1.35, send='mid', dtype=dtype, nchannels=nchannels)
-# 
-# if DDC==False:
-#     A000000, B000000 = t.open_binary(filevoltage, nchannels=nchannels)
-# else:
-#     AI, AQ, BI, BQ = t.open_binary(filevoltage, nchannels=nchannels)
-# 
-# =============================================================================
+#store the addresses in memory where data will be loaded from and saved to
+fileBinary = "E:/more ADC data/example.bin"
+fileNumpy = "E:/more ADC data/example.npy"
 
-fs = 3e9
-fo = 1.425e9
-int_time = 5e-4
-run_time = 300*int_time
-amp = .4
-phi = 0
-offset = np.pi/16
-bits = 12
-#noise = [-70,-80,-90,-100,-110]
-noise = -110
-IQ = True
-raw = True
-fsr = 1.35
+#intialize useful variables
+fs=3e9 #sampling frequency in Hz
+fo = 1.497e9 #signal frequency in Hz
+int_time = .5*1e-3 #length of pulse/integration window in seconds
+fsr= 1.35 # ADC32RF45 fullscale range (volts)
 
-# =============================================================================
-# phaseAvgs = []
-# phaseSigmas = []
-# binnedAvgs = []
-# binnedSigmas = []
-# hypotAvgs = []
-# hypotSigmas = []
-# 
-# for n in noise:
-#         
-#     print('Running analysis for {:} dB white noise'.format(n))
-#     
-#     cat = " at {:} dB of white noise, {:} bit signal resolution, {:} volt amplitude".format(n, bits, amp)
-#     
-#     #generate data
-#     AI, AQ, BI, BQ = t.signal_gen(fs, fo, amp, phi, offset, bits, n, run_time, int_time, IQ)
-#     
-#     #compare amplitude reconstruction
-#     phaseAvgA, phaseAvgB = t.phase_rotation(fsr*AI/2**(bits-1), fsr*AQ/2**(bits-1), 
-#                                             fsr*BI/2**(bits-1), fsr*BQ/2**(bits-1), 
-#                                             fs, fo, int_time, not raw)
-#     
-#     truth = amp*np.ones(len(phaseAvgA))
-#     phaseSigma, phaseAsym = t.amplitude_correlation(phaseAvgA, phaseAvgB,
-#                                                        title='Phase rotation self correlation'+cat,
-#                                                        xlabel='Channel A',
-#                                                        ylabel='Truth',
-#                                                        hist=True, scatter = False)
-#     phaseAvgs.append([phaseAvgA, phaseAvgB])
-#     phaseSigmas.append(phaseSigma)
-#     
-#     binnedAvgA, binnedAvgB = t.binned_phase_rotation(fsr*AI/2**(bits-1), fsr*AQ/2**(bits-1),
-#                                                      fsr*BI/2**(bits-1), fsr*BQ/2**(bits-1),
-#                                                      fs, int_time, not raw)
-#     binnedSigma, binnedAsym = t.amplitude_correlation(binnedAvgA, binnedAvgB,
-#                                                           title='Pulse-wise phase rotation self correlation'+cat,
-#                                                        xlabel='Channel A',
-#                                                        ylabel='Truth',
-#                                                        hist=True, scatter = False)
-#     binnedAvgs.append([binnedAvgA, binnedAvgB])
-#     binnedSigmas.append(binnedSigma)
-#     
-#     hypotAvgA, hypotAvgB = t.hypot_recon(fsr*AI/2**(bits-1), fsr*AQ/2**(bits-1),
-#                                             fsr*BI/2**(bits-1), fsr*BQ/2**(bits-1),
-#                                             fs, int_time, not raw)
-#     hypotSigma, hypotAsym = t.amplitude_correlation(hypotAvgA, hypotAvgB,
-#                                                        title='Hypotenuse reconstruction self correlation'+cat,
-#                                                        xlabel='Channel A',
-#                                                        ylabel='Truth',
-#                                                        hist=True, scatter = False)
-#     hypotAvgs.append([hypotAvgA, hypotAvgB])
-#     hypotSigmas.append(hypotSigma)
-# =============================================================================
+#choose settings for read_binary and open_binary
+#if the binary file consists of DDC data, we want to read the file with different settings
+#since DDC and bypass data have different data formats
 
-phaseTimes=[]
-hypotTimes=[]
-lengths=np.geomspace(1e2,1e7,50)
-loops=10
+DDC = False #enter whether to read binary file is DDC data or bypassed data
+decim=12 #enter the decimation factor is data was decimated
+if DDC:
+    bits=16 #bit precision
+    dtype = np.uint16
+    fs=fs/decim
+    nchannels=4 #4 channels: 2 ADCs, each outputting an in-phase and quadrature signal if in DDC
+else:
+    bits=12 #bit precision
+    dtype = np.int16
+    nchannels=2 #2 channels: 2 ADCs, eash outputting a single real signal
 
-count=1
-for l in lengths :
-    print("loop {}".format(count))
-    count+=1
-    
-    setup = """import numpy as np; import tools as t; l={}; fs = 3e9; fo = 1.425e9; fsr=1.35;
-int_time = 5e-4; amp = .4; phi = 0;offset = np.pi/16; bits = 12; noise = -110; IQ = True; raw = True;
-AI, AQ, BI, BQ = t.signal_gen(fs, fo, amp, phi, offset, bits, noise, l/fs, int_time, IQ)
-    """.format(l)
+#convert the .bin file to .npy and save
+t.read_binary(infile=fileBinary, outfile=fileNumpy, bits=bits, fsr=1.35, send='mid', dtype=dtype, nchannels=nchannels)
 
-    #AI, AQ, BI, BQ = t.signal_gen(fs, fo, amp, phi, offset, bits, noise, l/fs, int_time, IQ)
-    
-    
-    p = """phaseAvgA, phaseAvgB = t.phase_rotation(fsr*AI/2**(bits-1), fsr*AQ/2**(bits-1),
-    fsr*BI/2**(bits-1), fsr*BQ/2**(bits-1), fs, fo, int_time, not raw)"""
-    
-    h = """hypotAvgA, hypotAvgB = t.hypot_recon(fsr*AI/2**(bits-1), fsr*AQ/2**(bits-1),
-    fsr*BI/2**(bits-1), fsr*BQ/2**(bits-1), fs, int_time, not raw)"""
-    
-    pTime = timeit.timeit(stmt=p, setup=setup, number=loops)/(2*loops)
-    phaseTimes.append(pTime)
-    hTime = timeit.timeit(stmt=h, setup=setup, number=loops)/(2*loops)
-    hypotTimes.append(hTime)
-    
-a,b = t.power_fitter(lengths, np.array(phaseTimes), title="Power Law Growth fit", dataLabel="Phase reconstruction")
-a,b = t.power_fitter(lengths, np.array(hypotTimes), title="Power Law Growth fit",dataLabel="V_rms reconstruction")
-a,b = t.exp_fitter(lengths, np.array(phaseTimes), title="Exponential growth fit",dataLabel="Phase reconstruction")
-a,b = t.exp_fitter(lengths, np.array(hypotTimes), title="Exponential growth fit", dataLabel="V_rms reconstruction")
-a,b = t.quasiPoly_fitter(lengths, np.array(phaseTimes), title="Quasi-polynomial growth fit",dataLabel="Phase reconstruction")
-a,b = t.quasiPoly_fitter(lengths, np.array(hypotTimes), title="Quasi-polynomial growth fit", dataLabel="V_rms reconstruction")
+#load the .npy file
+if DDC==False:
+    A, B = t.open_binary(fileNumpy, nchannels=nchannels)
+else:
+    AI, AQ, BI, BQ = t.open_binary(fileNumpy, nchannels=nchannels)
+
+#Now that some data is loaded up you can perform an analysis.
+#Note: read_binary is slow, so I recommend that if the binary file has already
+#been converted and save to a .npy file you comment out the line with read_binary
+#to speed up your analysis run time.
+
+#example analysis:
+#resolution analysis - calculates the relative amplitude asymmetry between
+#successive pulse window pairs. Compares the relative difference in this value
+#for channel A and channel B to determine the resolution of the signal generation
+#and measurement setup in parts per million. This relative difference is stored
+#for each pair of pulse windows and plotted in a histogram
+sigma, mu, diffs = t.amplitude_asym_hist(A, B, fs=fs, pulse_width=int_time)
